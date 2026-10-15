@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: usage-metering-db
+    environment:
+      POSTGRES_DB: usage_metering
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app_secret
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d usage_metering"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: usage-metering-app
+    environment:
+      DATABASE_URL: postgresql://app:app_secret@postgres:5432/usage_metering
+      NODE_ENV: development
+      PORT: "3000"
+      LOG_LEVEL: debug
+      MAX_UNITS_PER_REQUEST: "10000"
+      RATE_LIMIT_WINDOW_MS: "60000"
+      RATE_LIMIT_MAX: "100"
+      BOOTSTRAP_ACCOUNT_NAME: "Acme Corp"
+      BOOTSTRAP_API_KEY_NAME: "Default Key"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: usage-metering-db-test
+    environment:
+      POSTGRES_DB: usage_metering_test
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: test_secret
+    volumes:
+      - pgdata_test:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d usage_metering_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
+  pgdata_test:
