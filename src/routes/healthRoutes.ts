@@ -1,3 +1,4 @@
+import { asyncHandler } from "../utils/index.js";
 import { Router, Response } from "express";
 import { getLiveness, getReadiness } from "../modules/health/healthService.js";
 
@@ -7,10 +8,10 @@ router.get("/live", (_req, res: Response) => {
   return res.json(getLiveness());
 });
 
-router.get("/ready", async (_req, res: Response) => {
+router.get("/ready", asyncHandler(async (_req, res: Response) => {
   const readiness = await getReadiness();
   const statusCode = readiness.status === "ok" ? 200 : 503;
   return res.status(statusCode).json(readiness);
-});
+}));
 
 export default router;

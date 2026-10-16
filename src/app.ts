@@ -4,6 +4,7 @@ import { errorHandler } from "./errors/errorHandler.js";
 import { logger, createRequestLogger } from "./logging/logger.js";
 import { createRateLimiterMiddleware, closeRateLimiterStore } from "./modules/rate-limiter/rateLimiter.js";
 import { getEnv } from "./config/index.js";
+import { asyncHandler } from "./utils/index.js";
 import usageRoutes from "./routes/usageRoutes.js";
 import apiKeyRoutes from "./routes/apiKeyRoutes.js";
 import planRoutes from "./routes/planRoutes.js";
@@ -58,11 +59,11 @@ export function createApp(): express.Application {
 
   app.use("/health", healthRoutes);
 
-  app.use("/usage", authMiddleware, usageRoutes);
-  app.use("/api-keys", authMiddleware, apiKeyRoutes);
-  app.use("/plans", authMiddleware, planRoutes);
-  app.use("/assignments", authMiddleware, assignmentRoutes);
-  app.use("/users", authMiddleware, userRoutes);
+  app.use("/usage", asyncHandler(authMiddleware), usageRoutes);
+  app.use("/api-keys", asyncHandler(authMiddleware), apiKeyRoutes);
+  app.use("/plans", asyncHandler(authMiddleware), planRoutes);
+  app.use("/assignments", asyncHandler(authMiddleware), assignmentRoutes);
+  app.use("/users", asyncHandler(authMiddleware), userRoutes);
 
   app.use((_req: Request, _res: Response, next: NextFunction) => {
     next(new Error("NOT_FOUND"));
