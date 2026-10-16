@@ -7,12 +7,10 @@ export interface AuthenticatedRequest extends Request {
   apiKeyId: number;
 }
 
-declare global {
-  namespace Express {
-    interface Request {
-      account?: { id: number };
-      apiKeyId?: number;
-    }
+declare module "express" {
+  interface Request {
+    account?: { id: number };
+    apiKeyId?: number;
   }
 }
 

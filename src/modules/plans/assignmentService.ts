@@ -1,6 +1,6 @@
 import { db } from "../../db/client.js";
-import { planAssignments, plans, users, accounts } from "../../db/schema/index.js";
-import { eq, and, isNull, isNotNull, or, sql, lt, gte } from "drizzle-orm";
+import { planAssignments, plans, users } from "../../db/schema/index.js";
+import { eq, and, isNull, or, gte } from "drizzle-orm";
 import { NotFoundError, AuthorizationError, ValidationError, ConflictError } from "../../errors/AppError.js";
 import { getNextUtcMonthStart, formatDateForDb } from "../../utils/date.js";
 
@@ -46,7 +46,7 @@ export async function createAssignment(
     if (user.length === 0) {
       throw new NotFoundError("User not found in this account");
     }
-    userId = user[0]!.id;
+    userId = user[0].id;
   }
 
   const [plan] = await db
@@ -73,12 +73,45 @@ export async function createAssignment(
 
   const effectiveFrom = input.effectiveFrom ?? new Date();
   const effectiveFromDate = new Date(effectiveFrom);
-  const effectiveFromStr = formatDateForDb(effectiveFromDate);
 
   const nextMonthStart = getNextUtcMonthStart(effectiveFromDate);
   const nextMonthStartDate = new Date(nextMonthStart);
-  const nextMonthStartStr = formatDateForDb(nextMonthStartDate);
 
+  // First, end any current assignment for the same subject (account or user)
+  // This must be done BEFORE checking for overlaps, so the old assignment doesn't appear as overlapping
+  if (isAccountLevel) {
+    const current = await db
+      .select()
+      .from(planAssignments)
+      .where(and(eq(planAssignments.accountId, BigInt(accountId)), isNull(planAssignments.userId), isNull(planAssignments.effectiveTo)))
+      .limit(1)
+      .execute();
+
+    if (current.length > 0) {
+      await db
+        .update(planAssignments)
+        .set({ effectiveTo: nextMonthStartDate }) // End at start of next month
+        .where(eq(planAssignments.id, current[0].id))
+        .execute();
+    }
+  } else {
+    const current = await db
+      .select()
+      .from(planAssignments)
+      .where(and(eq(planAssignments.userId, userId!), isNull(planAssignments.effectiveTo)))
+      .limit(1)
+      .execute();
+
+    if (current.length > 0) {
+      await db
+        .update(planAssignments)
+        .set({ effectiveTo: nextMonthStartDate })
+        .where(eq(planAssignments.id, current[0].id))
+        .execute();
+    }
+  }
+
+  // Now check for overlaps with OTHER assignments (not the one we just ended)
   if (isAccountLevel) {
     const existing = await db
       .select()
@@ -114,42 +147,7 @@ export async function createAssignment(
     }
   }
 
-  const finalEffectiveFrom = effectiveFromDate;
-  let finalEffectiveTo: Date | null = null;
-
-  if (isAccountLevel) {
-    const current = await db
-      .select()
-      .from(planAssignments)
-      .where(and(eq(planAssignments.accountId, BigInt(accountId)), isNull(planAssignments.userId), isNull(planAssignments.effectiveTo)))
-      .limit(1)
-      .execute();
-
-    if (current.length > 0) {
-      await db
-        .update(planAssignments)
-        .set({ effectiveTo: nextMonthStartDate })
-        .where(eq(planAssignments.id, current[0]!.id))
-        .execute();
-      finalEffectiveTo = null;
-    }
-  } else {
-    const current = await db
-      .select()
-      .from(planAssignments)
-      .where(and(eq(planAssignments.userId, userId!), isNull(planAssignments.effectiveTo)))
-      .limit(1)
-      .execute();
-
-    if (current.length > 0) {
-      await db
-        .update(planAssignments)
-        .set({ effectiveTo: nextMonthStartDate })
-        .where(eq(planAssignments.id, current[0]!.id))
-        .execute();
-      finalEffectiveTo = null;
-    }
-  }
+  const finalEffectiveTo: Date | null = null;
 
   const [assignment] = await db
     .insert(planAssignments)
@@ -157,13 +155,13 @@ export async function createAssignment(
       accountId: BigInt(accountId),
       userId,
       planId: BigInt(input.planId),
-      effectiveFrom: finalEffectiveFrom,
+      effectiveFrom: effectiveFromDate,
       effectiveTo: finalEffectiveTo,
     })
     .returning()
     .execute();
 
-  return mapAssignment(assignment);
+  return mapAssignment(assignment, plan.name, plan.type as "account" | "user");
 }
 
 export async function listAssignments(accountId: number): Promise<AssignmentInfo[]> {
@@ -222,14 +220,14 @@ export async function getCurrentAssignments(accountId: number): Promise<{
   };
 }
 
-function mapAssignment(a: typeof planAssignments.$inferSelect): AssignmentInfo {
+function mapAssignment(a: typeof planAssignments.$inferSelect, planName: string, planType: "account" | "user"): AssignmentInfo {
   return {
     id: Number(a.id),
     accountId: Number(a.accountId),
     userId: a.userId ? Number(a.userId) : null,
     planId: Number(a.planId),
-    planName: "",
-    planType: "account",
+    planName,
+    planType,
     effectiveFrom: formatDateForDb(a.effectiveFrom),
     effectiveTo: a.effectiveTo ? formatDateForDb(a.effectiveTo) : null,
     createdAt: a.createdAt,

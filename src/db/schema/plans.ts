@@ -1,4 +1,4 @@
-import { pgTable, bigserial, varchar, boolean, timestamp, bigint, check, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { pgTable, bigserial, varchar, boolean, timestamp, bigint, check, index } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { accounts } from "./accounts.js";
 

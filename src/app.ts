@@ -1,9 +1,8 @@
-import express from "express";
-import rateLimit from "express-rate-limit";
+import express, { Request, Response, NextFunction } from "express";
 import { authMiddleware } from "./modules/auth/authMiddleware.js";
 import { errorHandler } from "./errors/errorHandler.js";
 import { logger, createRequestLogger } from "./logging/logger.js";
-import { getEnv } from "./config/index.js";
+import { createRateLimiterMiddleware, closeRateLimiterStore } from "./modules/rate-limiter/rateLimiter.js";
 import usageRoutes from "./routes/usageRoutes.js";
 import apiKeyRoutes from "./routes/apiKeyRoutes.js";
 import planRoutes from "./routes/planRoutes.js";
@@ -11,25 +10,28 @@ import assignmentRoutes from "./routes/assignmentRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import healthRoutes from "./routes/healthRoutes.js";
 
-const env = getEnv();
+declare module "express" {
+  interface Request {
+    logger?: ReturnType<typeof createRequestLogger>;
+  }
+}
 
 export function createApp(): express.Application {
   const app = express();
 
   app.use(express.json({ limit: "64kb" }));
 
-  app.use((req, _res, next) => {
+  app.use((req: Request, _res: Response, next: NextFunction) => {
     const requestId = (req.headers["x-request-id"] as string) || crypto.randomUUID();
     req.headers["x-request-id"] = requestId;
-    const requestLogger = createRequestLogger(logger, requestId);
-    (req as any).logger = requestLogger;
+    req.logger = createRequestLogger(logger, requestId);
     next();
   });
 
-  app.use((req, res, next) => {
+  app.use((req: Request, res: Response, next: NextFunction) => {
     const start = Date.now();
     res.on("finish", () => {
-      const requestLogger = (req as any).logger;
+      const requestLogger = req.logger;
       if (requestLogger) {
         requestLogger.info(
           {
@@ -45,28 +47,8 @@ export function createApp(): express.Application {
     next();
   });
 
-  const limiter = rateLimit({
-    windowMs: env.RATE_LIMIT_WINDOW_MS,
-    max: env.RATE_LIMIT_MAX,
-    standardHeaders: true,
-    legacyHeaders: false,
-    keyGenerator: (req) => {
-      const authHeader = req.headers.authorization;
-      if (authHeader && authHeader.startsWith("Bearer ")) {
-        const key = authHeader.slice(7);
-        const prefix = key.split(".")[0];
-        return `key:${prefix}`;
-      }
-      return `ip:${req.ip}`;
-    },
-    handler: (_req, res) => {
-      res.status(429).json({
-        error: { code: "RATE_LIMITED", message: "Too many requests" },
-      });
-    },
-  });
-
-  app.use(limiter);
+  const rateLimiter = createRateLimiterMiddleware();
+  app.use(rateLimiter);
 
   app.use("/health", healthRoutes);
 
@@ -76,11 +58,15 @@ export function createApp(): express.Application {
   app.use("/assignments", authMiddleware, assignmentRoutes);
   app.use("/users", authMiddleware, userRoutes);
 
-  app.use((_req, _res, next) => {
+  app.use((_req: Request, _res: Response, next: NextFunction) => {
     next(new Error("NOT_FOUND"));
   });
 
   app.use(errorHandler);
 
   return app;
+}
+
+export async function shutdown(): Promise<void> {
+  await closeRateLimiterStore();
 }

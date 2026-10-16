@@ -17,6 +17,18 @@ services:
       retries: 10
       start_period: 10s
 
+  redis:
+    image: redis:7-alpine
+    container_name: usage-metering-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
   app:
     build:
       context: .
@@ -24,6 +36,7 @@ services:
     container_name: usage-metering-app
     environment:
       DATABASE_URL: postgresql://app:app_secret@postgres:5432/usage_metering
+      REDIS_URL: redis://redis:6379
       NODE_ENV: development
       PORT: "3000"
       LOG_LEVEL: debug
@@ -34,6 +47,8 @@ services:
       BOOTSTRAP_API_KEY_NAME: "Default Key"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     ports:
       - "3000:3000"

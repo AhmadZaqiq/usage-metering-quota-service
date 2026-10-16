@@ -17,6 +17,8 @@ export const usageRequests = pgTable(
     decision: varchar("decision", { length: 20 }).notNull(),
     rejectionReason: varchar("rejection_reason", { length: 100 }),
     periodStart: date("period_start").notNull(),
+    accountRemaining: bigint("account_remaining", { mode: "bigint" }),
+    userRemaining: bigint("user_remaining", { mode: "bigint" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({

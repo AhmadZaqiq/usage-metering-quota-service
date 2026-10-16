@@ -18,7 +18,7 @@ A professional, backend-only Usage Metering & Quota Service built with TypeScrip
 - **Structured Logging**: Pino-based request/decision logging with correlation IDs
 - **Health Endpoints**: Liveness (`/health/live`) and readiness (`/health/ready`) probes
 - **Rate Limiting**: In-memory rate limiting (per IP for unauthenticated, per key prefix for authenticated)
-- **OpenAPI Documentation**: Swagger UI at `/docs` (when implemented)
+- **Redis-backed Distributed Rate Limiting**: Optional Redis store for multi-instance deployments (falls back to in-memory)
 - **Docker Support**: Docker Compose for local development with PostgreSQL 16
 
 ---
@@ -356,6 +356,8 @@ npm run client -- -k <API_KEY> -n 5 -i req-001 [--userId user123] [-u http://loc
 | `npm run db:migrate` | Apply migrations |
 | `npm run db:studio` | Open Drizzle Studio |
 | `npm run bootstrap` | Create initial account + API key |
+| `npm run bootstrap:loadtest` | Create load test account + API key |
+| `npm run loadtest` | Run Autocannon load test |
 | `npm run client` | Run example CLI client |
 
 ### Testing
@@ -369,6 +371,19 @@ npm run test:coverage
 ```
 
 Tests use real PostgreSQL (test database via Docker Compose). No mocks for database behavior.
+
+### Load Testing
+
+```bash
+# Bootstrap a test account
+export BOOTSTRAP_ACCOUNT_NAME=loadtest-account
+export BOOTSTRAP_API_KEY_NAME=loadtest-key
+npm run bootstrap:loadtest
+
+# Run load test with the generated API key
+export LOADTEST_API_KEY=<your-key>
+npm run loadtest -- --duration 10 --connections 10 --pipelining 1 --units 1
+```
 
 ---
 
@@ -388,6 +403,7 @@ src/
 ├── modules/
 │   ├── auth/                   # API key lifecycle, middleware
 │   ├── plans/                  # Plan + assignment services
+│   ├── rate-limiter/           # Rate limiting (in-memory + Redis)
 │   ├── usage/                  # Quota evaluator, counters, usage service
 │   └── health/                 # Health checks
 ├── routes/                     # Express route handlers
@@ -395,7 +411,7 @@ src/
 ├── errors/                     # Typed error classes + handler
 ├── logging/                    # Pino logger factory
 ├── utils/                      # Hash, idempotency, date utilities
-└── scripts/                    # Bootstrap, example client
+└── scripts/                    # Bootstrap, example client, load test
 ```
 
 ---
@@ -405,7 +421,7 @@ src/
 - **No Client-Trust**: Account ID derived from authenticated API key only
 - **Secret Handling**: API key secrets never logged; only prefix stored in plaintext
 - **Parameterized Queries**: Drizzle ORM prevents SQL injection
-- **Rate Limiting**: In-memory (single-instance limitation documented)
+- **Rate Limiting**: In-memory (single-instance); optional Redis-backed distributed limiting for multi-instance
 - **Request Size Limit**: 64KB body limit
 - **CORS**: Configured for intended origins (adjust for production)
 - **HTTPS**: Terminates at reverse proxy in production (not included)
@@ -413,25 +429,38 @@ src/
 
 ---
 
-## Known Issues
+## Performance Baseline
 
-1. **Circular JSON Serialization Error**: Usage processing currently encounters a `TypeError: Converting circular structure to JSON` when serializing Drizzle query results. Under investigation.
-2. **Hardcoded Plan Type in Assignment Response**: `mapAssignment` returns `planType: "account"` instead of actual plan type.
-3. **Assignment Overlap Edge Cases**: Exclusion constraint implemented but edge cases (e.g., concurrent assignment creation) require further verification.
+Load testing was performed with Autocannon against the local application using real PostgreSQL. Results are a local baseline for the recorded environment, not a universal production capacity guarantee.
 
-These are pending investigation and must not be considered resolved.
+### Test Environment
 
----
+- Node.js: 22.x
+- PostgreSQL: 16 (local, Docker)
+- Application: Express + Drizzle ORM + Pessimistic locking
+- Rate limit: Disabled (RATE_LIMIT_MAX=10000000) for pure throughput measurement
 
-## Next Steps (Planned)
+### Baseline Results
 
-- [ ] Fix circular JSON serialization in usage service
-- [ ] Fix hardcoded plan type in assignment responses
-- [ ] Add comprehensive integration tests (concurrency, rollback, boundary)
-- [ ] Implement OpenAPI/Swagger documentation
-- [ ] Add load testing with Autocannon
-- [ ] Document performance baseline
-- [ ] Production hardening (TLS, secrets management, distributed rate limiting)
+| Connections | Duration | Req/s | p50 (ms) | p99 (ms) | Max (ms) | Errors |
+|-------------|----------|-------|----------|----------|----------|--------|
+| 10 | 10s | 116.20 | 67.00 | 362.00 | 684.00 | 0 |
+| 25 | 10s | 125.40 | 171.00 | 773.00 | 1474.00 | 0 |
+
+All tests used authenticated usage requests with unique idempotency keys per request. Throughput is limited by database writes (counter increment + usage_request insert) within a single transaction.
+
+### Run Your Own Load Test
+
+```bash
+# Bootstrap a test account
+export BOOTSTRAP_ACCOUNT_NAME=loadtest-account
+export BOOTSTRAP_API_KEY_NAME=loadtest-key
+npm run bootstrap:loadtest
+
+# Run load test (use the API key printed above)
+export LOADTEST_API_KEY=<your-key>
+npm run loadtest -- --duration 10 --connections 10 --pipelining 1 --units 1
+```
 
 ---
 

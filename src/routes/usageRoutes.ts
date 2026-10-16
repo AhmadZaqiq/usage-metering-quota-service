@@ -13,7 +13,7 @@ router.post("/", async (req: Request, res: Response) => {
     throw new ValidationError("Invalid request body", parsed.error.flatten().fieldErrors);
   }
 
-  const result = await processUsageRequest(authReq.account!.id, parsed.data, authReq.apiKeyId!);
+  const result = await processUsageRequest(authReq.account.id, parsed.data, authReq.apiKeyId);
 
   const response: Record<string, unknown> = {
     decision: result.decision,

@@ -1,5 +1,4 @@
-import { pgTable, bigserial, bigint, timestamp, uniqueIndex, index, foreignKey } from "drizzle-orm/pg-core";
-import { sql } from "drizzle-orm";
+import { pgTable, bigserial, bigint, timestamp, index } from "drizzle-orm/pg-core";
 import { accounts } from "./accounts.js";
 import { users } from "./users.js";
 import { plans } from "./plans.js";

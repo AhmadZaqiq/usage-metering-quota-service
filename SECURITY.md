@@ -34,9 +34,12 @@ If you discover a security vulnerability in this project, please report it respo
 - Parameterized queries via Drizzle ORM (no SQL injection)
 
 ### Rate Limiting
-- In-memory rate limiting (single-instance limitation documented)
+- **Distributed rate limiting via Redis** (optional, falls back to in-memory)
 - Unauthenticated: per IP
-- Authenticated: per API key prefix
+- Authenticated: per API key prefix (never raw secret)
+- Atomic increment/expiration with Redis Lua scripts
+- Graceful degradation to in-memory if Redis unavailable
+- Standard headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
 
 ### Secrets Management
 - No secrets in source code or Git history
@@ -44,14 +47,22 @@ If you discover a security vulnerability in this project, please report it respo
 - `.env.example` contains placeholders only
 - API key secrets never logged (only prefix in structured logs)
 - Bootstrap credentials via environment variables
+- Production: inject secrets via deployment environment/secret manager
 
 ### Transport Security
 - Development: HTTP (local Docker network)
-- Production: Requires reverse proxy with TLS termination (not included)
+- Production: Requires reverse proxy with TLS termination (see below)
+
+### TLS Termination Strategy
+- **Application does NOT terminate TLS** - designed for reverse proxy termination
+- Recommended reverse proxies: nginx, Traefik, Caddy, Cloudflare
+- Proxy must forward: `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Request-ID`
+- Application trusts proxy headers only when `TRUST_PROXY=true` (default: false)
+- Local development exception: `NODE_ENV=development` allows HTTP
 
 ## Known Limitations
 
-1. **In-Memory Rate Limiting**: Not shared across multiple application instances. Use Redis-backed limiter for horizontal scaling.
+1. **Rate Limiting**: Redis-backed distributed limiting is optional; falls back to in-memory if Redis unavailable (documented in logs).
 2. **No TLS in Application**: Terminates at reverse proxy (nginx/Traefik/Caddy) in production.
 3. **Single Database Instance**: No read replicas or failover configured.
 4. **API Key Rotation**: Not automated; manual revocation + creation required.
@@ -60,9 +71,10 @@ If you discover a security vulnerability in this project, please report it respo
 
 - [ ] Use strong, unique `POSTGRES_PASSWORD`
 - [ ] Configure reverse proxy with TLS certificates
+- [ ] Set `TRUST_PROXY=true` when behind trusted reverse proxy
 - [ ] Restrict CORS origins to known domains
 - [ ] Set `LOG_LEVEL=warn` or `error` in production
-- [ ] Use secrets manager for `DATABASE_URL` and other secrets
+- [ ] Use secrets manager for `DATABASE_URL`, `REDIS_URL`, and other secrets
 - [ ] Configure database connection pooling for production load
 - [ ] Enable database audit logging if required
 - [ ] Review and adjust rate limit thresholds

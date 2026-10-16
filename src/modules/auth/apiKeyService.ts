@@ -1,8 +1,8 @@
 import { db } from "../../db/client.js";
 import { apiKeys, accounts } from "../../db/schema/index.js";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { generateApiKey, verifyApiKeyHash } from "../../utils/hash.js";
-import { NotFoundError, AuthorizationError } from "../../errors/AppError.js";
+import { NotFoundError } from "../../errors/AppError.js";
 
 export interface ApiKeyInfo {
   id: number;
@@ -36,10 +36,10 @@ export async function createApiKey(accountId: number, name?: string): Promise<Cr
 
   // key is guaranteed to exist since insert succeeded
   return {
-    id: Number(key!.id),
-    prefix: key!.prefix,
+    id: Number(key.id),
+    prefix: key.prefix,
     key: fullKey,
-    name: key!.name ?? null,
+    name: key.name ?? null,
   };
 }
 
@@ -108,7 +108,7 @@ export async function verifyApiKey(fullKey: string): Promise<VerifiedApiKey | nu
 
   if (key.length === 0) return null;
 
-  const record = key[0]!;
+  const record = key[0];
 
   if (!record.accountIsActive || record.accountDeletedAt) return null;
 

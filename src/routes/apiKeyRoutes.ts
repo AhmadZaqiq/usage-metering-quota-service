@@ -13,7 +13,7 @@ router.post("/", async (req: Request, res: Response) => {
     throw new ValidationError("Invalid request body", parsed.error.flatten().fieldErrors);
   }
 
-  const result = await createApiKey(authReq.account!.id, parsed.data.name);
+  const result = await createApiKey(authReq.account.id, parsed.data.name);
   return res.status(201).json({
     id: result.id,
     prefix: result.prefix,
@@ -24,7 +24,7 @@ router.post("/", async (req: Request, res: Response) => {
 
 router.get("/", async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
-  const keys = await listApiKeys(authReq.account!.id);
+  const keys = await listApiKeys(authReq.account.id);
   return res.json(keys);
 });
 
@@ -35,7 +35,7 @@ router.delete("/:id", async (req: Request, res: Response) => {
     throw new ValidationError("Invalid ID", parsed.error.flatten().fieldErrors);
   }
 
-  await revokeApiKey(authReq.account!.id, parsed.data.id);
+  await revokeApiKey(authReq.account.id, parsed.data.id);
   return res.status(204).send();
 });
 

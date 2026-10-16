@@ -19,19 +19,19 @@ router.post("/", async (req: Request, res: Response) => {
     effectiveFrom: parsed.data.effectiveFrom ? new Date(parsed.data.effectiveFrom) : undefined,
   };
 
-  const assignment = await createAssignment(authReq.account!.id, input, authReq.account!.id);
+  const assignment = await createAssignment(authReq.account.id, input, authReq.account.id);
   return res.status(201).json(assignment);
 });
 
 router.get("/", async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
-  const assignments = await listAssignments(authReq.account!.id);
+  const assignments = await listAssignments(authReq.account.id);
   return res.json(assignments);
 });
 
 router.get("/current", async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
-  const current = await getCurrentAssignments(authReq.account!.id);
+  const current = await getCurrentAssignments(authReq.account.id);
   return res.json(current);
 });
 

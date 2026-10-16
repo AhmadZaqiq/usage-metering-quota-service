@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { ZodError } from "zod";
 import { pgErrorCode } from "../utils/pgError.js";
-import { AppError, ValidationError, InternalError } from "./AppError.js";
+import { AppError } from "./AppError.js";
 import { logger } from "../logging/logger.js";
 
 export function errorHandler(err: Error, req: Request, res: Response, _next: NextFunction) {

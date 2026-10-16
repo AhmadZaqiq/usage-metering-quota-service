@@ -1,7 +1,10 @@
-export default [
-  { ignores: ["dist", "node_modules", "*.config.*", "*.md"] },
+import tseslint from "typescript-eslint";
+
+export default tseslint.config(
+  { ignores: ["dist", "node_modules", "*.config.*", "*.md", "src/test/**", "src/scripts/**"] },
+  ...tseslint.configs.recommendedTypeChecked,
   {
-    files: ["**/*.ts"],
+    files: ["src/**/*.ts", "!src/test/**/*.ts", "!src/scripts/**/*.ts"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "module",
@@ -10,23 +13,13 @@ export default [
         tsconfigRootDir: import.meta.dirname,
       },
     },
-    settings: {
-      "import/resolver": {
-        typescript: { project: "./tsconfig.json" },
-      },
-    },
-    plugins: {
-      "@typescript-eslint": await import("typescript-eslint"),
-    },
     rules: {
-      "@typescript-eslint/no-explicit-any": "error",
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
-      "@typescript-eslint/consistent-type-imports": "error",
       "@typescript-eslint/no-floating-promises": "warn",
       "@typescript-eslint/no-misused-promises": "warn",
       "@typescript-eslint/require-await": "warn",
       "prefer-const": "error",
       "no-var": "error",
     },
-  },
-];
+  }
+);

@@ -1,4 +1,4 @@
-import { createApp } from "./app.js";
+import { createApp, shutdown as appShutdown } from "./app.js";
 import { getEnv } from "./config/index.js";
 import { logger } from "./logging/logger.js";
 import { closePool } from "./db/client.js";
@@ -11,19 +11,18 @@ const server = app.listen(env.PORT, () => {
   logger.info({ port: env.PORT, env: env.NODE_ENV }, "Server started");
 });
 
-async function shutdown(signal: string) {
+function shutdown(signal: string) {
   logger.info({ signal }, "Shutdown initiated");
-  server.close(() => {
+  server.close(async () => {
     logger.info("HTTP server closed");
-    closePool()
-      .then(() => {
-        logger.info("Database pool closed");
-        process.exit(0);
-      })
-      .catch((err) => {
-        logger.error({ err }, "Error closing database pool");
-        process.exit(1);
-      });
+    try {
+      await Promise.all([closePool(), appShutdown()]);
+      logger.info("Database pool and rate limiter closed");
+      process.exit(0);
+    } catch (err) {
+      logger.error({ err }, "Error during shutdown");
+      process.exit(1);
+    }
   });
 
   setTimeout(() => {

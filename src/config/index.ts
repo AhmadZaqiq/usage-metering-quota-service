@@ -4,6 +4,7 @@ const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(3000),
   DATABASE_URL: z.string().url(),
+  REDIS_URL: z.string().url().optional(),
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error"]).default("info"),
 
   MAX_UNITS_PER_REQUEST: z.coerce.number().int().positive().default(10_000),

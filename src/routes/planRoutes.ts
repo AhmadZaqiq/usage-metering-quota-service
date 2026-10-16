@@ -13,7 +13,7 @@ router.post("/", async (req: Request, res: Response) => {
     throw new ValidationError("Invalid request body", parsed.error.flatten().fieldErrors);
   }
 
-  const plan = await createPlan(parsed.data, authReq.account!.id);
+  const plan = await createPlan(parsed.data, authReq.account.id);
   return res.status(201).json({
     id: plan.id,
     name: plan.name,
@@ -29,7 +29,7 @@ router.post("/", async (req: Request, res: Response) => {
 
 router.get("/", async (req: Request, res: Response) => {
   const authReq = req as AuthenticatedRequest;
-  const plans = await listPlans(authReq.account!.id);
+  const plans = await listPlans(authReq.account.id);
   return res.json(
     plans.map((p) => ({
       id: p.id,
@@ -52,7 +52,7 @@ router.get("/:id", async (req: Request, res: Response) => {
     throw new ValidationError("Invalid ID", parsed.error.flatten().fieldErrors);
   }
 
-  const plan = await getPlan(parsed.data.id, authReq.account!.id);
+  const plan = await getPlan(parsed.data.id, authReq.account.id);
   return res.json({
     id: plan.id,
     name: plan.name,
@@ -78,7 +78,7 @@ router.patch("/:id", async (req: Request, res: Response) => {
     throw new ValidationError("Invalid request body", bodyParsed.error.flatten().fieldErrors);
   }
 
-  const plan = await updatePlan(paramParsed.data.id, bodyParsed.data, authReq.account!.id);
+  const plan = await updatePlan(paramParsed.data.id, bodyParsed.data, authReq.account.id);
   return res.json({
     id: plan.id,
     name: plan.name,
@@ -99,7 +99,7 @@ router.delete("/:id", async (req: Request, res: Response) => {
     throw new ValidationError("Invalid ID", parsed.error.flatten().fieldErrors);
   }
 
-  await deletePlan(parsed.data.id, authReq.account!.id);
+  await deletePlan(parsed.data.id, authReq.account.id);
   return res.status(204).send();
 });
 

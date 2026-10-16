@@ -1,6 +1,6 @@
 import { db } from "../../db/client.js";
-import { plans, accounts } from "../../db/schema/index.js";
-import { eq, and, isNull, sql, or } from "drizzle-orm";
+import { plans } from "../../db/schema/index.js";
+import { eq, and, isNull, or } from "drizzle-orm";
 import { NotFoundError, AuthorizationError, ValidationError } from "../../errors/AppError.js";
 import { MAX_UNITS_PER_REQUEST_BIGINT } from "../../config/index.js";
 
@@ -40,7 +40,7 @@ export async function createPlan(input: CreatePlanInput, requestingAccountId: nu
   // If not provided (undefined), default to requesting account (custom plan).
   const hasExplicitOwner = input.ownerAccountId !== undefined;
   const ownerAccountId = input.ownerAccountId ?? requestingAccountId;
-  const isSystem = !hasExplicitOwner; // System plan only if explicitly set to null
+  // System plan only if explicitly set to null
 
   if (hasExplicitOwner && ownerAccountId !== null && ownerAccountId !== requestingAccountId) {
     throw new AuthorizationError("Cannot create custom plan for another account");
