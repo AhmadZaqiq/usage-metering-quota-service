@@ -1,4 +1,5 @@
 import { parseArgs } from "util";
+import * as fs from "fs";
 
 interface ClientArgs {
   url: string;
@@ -22,14 +23,25 @@ function parseCliArgs(): ClientArgs {
     allowPositionals: false,
   });
 
-  if (!values.key || !values.units || !values.idempotencyKey) {
+  // Read API key from shared secrets file if not provided via CLI
+  let key = values.key;
+  if (!key) {
+    try {
+      key = fs.readFileSync("/run/secrets/api-key", "utf8").trim();
+    } catch {
+      // Key will be missing, will be caught below
+    }
+  }
+
+  if (!key || !values.units || !values.idempotencyKey) {
     console.error("Usage: npm run client -- -k <api-key> -n <units> -i <idempotency-key> [--userId <id>] [-u <url>]");
+    console.error("  API key can also be provided via /run/secrets/api-key (set by bootstrap)");
     process.exit(1);
   }
 
   return {
     url: values.url,
-    key: values.key,
+    key,
     units: values.units,
     userId: values.userId,
     idempotencyKey: values.idempotencyKey,

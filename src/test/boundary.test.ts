@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { getTestDb } from "./setup.js";
 import { accounts, users, plans, planAssignments, apiKeys, usageCounters, usageRequests } from "../db/schema/index.js";
 import { eq, and, isNull } from "drizzle-orm";
-import { createApiKey } from "../modules/auth/apiKeyService.js";
+import { createApiKey, revokeApiKey } from "../modules/auth/apiKeyService.js";
 import { createPlan, listPlans, getPlan, updatePlan, deletePlan } from "../modules/plans/planService.js";
 import { createAssignment } from "../modules/plans/assignmentService.js";
 import { processUsageRequest, getUsageHistory } from "../modules/usage/usageService.js";
@@ -637,6 +637,32 @@ describe("Boundary Integration Tests", () => {
         expect(key.keyHash).toBeDefined();
         expect(key.idempotencyKey).toBeUndefined(); // full secret not stored
       }
+    });
+
+    it("should revoke an API key", async () => {
+      const context = await setupBasicTestContext();
+
+      // Create a new API key
+      const keyResult = await createApiKey(context.account.id, "Revocable Key");
+
+      // Verify the key exists
+      const [existingKey] = await getTestDb()
+        .select()
+        .from(apiKeys)
+        .where(eq(apiKeys.id, keyResult.id))
+        .execute();
+      expect(existingKey.isRevoked).toBe(false);
+
+      // Revoke the key
+      await revokeApiKey(context.account.id, keyResult.id);
+
+      // Verify the key is revoked
+      const [revokedKey] = await getTestDb()
+        .select()
+        .from(apiKeys)
+        .where(eq(apiKeys.id, keyResult.id))
+        .execute();
+      expect(revokedKey.isRevoked).toBe(true);
     });
   });
 

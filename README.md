@@ -425,7 +425,7 @@ src/
 - **Parameterized Queries**: Drizzle ORM prevents SQL injection
 - **Rate Limiting**: In-memory (single-instance); optional Redis-backed distributed limiting for multi-instance
 - **Request Size Limit**: 64KB body limit
-- **CORS**: Configured for intended origins (adjust for production)
+- **CORS**: Not configured; API key authentication provides primary access control. Configure CORS in `app.ts` if browser-based clients are needed.
 - **HTTPS**: Terminates at reverse proxy in production (not included)
 - **Proxy Trust**: `TRUST_PROXY=true` only when behind a trusted reverse proxy; otherwise forwarded headers (e.g., `X-Forwarded-For`) could be spoofed by clients
 - **Input Validation**: Zod schemas at all boundaries

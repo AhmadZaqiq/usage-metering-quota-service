@@ -52,6 +52,8 @@ services:
         condition: service_healthy
     ports:
       - "3000:3000"
+    volumes:
+      - bootstrap-secrets:/run/secrets
 
   client:
     build:
@@ -65,7 +67,9 @@ services:
     depends_on:
       app:
         condition: service_started
-    command: ["sh", "-c", "npx tsx src/scripts/client.ts -k \"${API_KEY}\" -n 5 -i demo-001 -u http://app:3000"]
+    command: ["sh", "-c", "API_KEY=$(cat /run/secrets/api-key) && npx tsx src/scripts/client.ts -k \"$API_KEY\" -n 5 -i demo-001 -u http://app:3000"]
+    volumes:
+      - bootstrap-secrets:/run/secrets
 
   postgres-test:
     image: postgres:16-alpine
@@ -87,3 +91,4 @@ services:
 volumes:
   pgdata:
   pgdata_test:
+  bootstrap-secrets:
