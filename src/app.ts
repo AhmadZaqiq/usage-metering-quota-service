@@ -3,6 +3,7 @@ import { authMiddleware } from "./modules/auth/authMiddleware.js";
 import { errorHandler } from "./errors/errorHandler.js";
 import { logger, createRequestLogger } from "./logging/logger.js";
 import { createRateLimiterMiddleware, closeRateLimiterStore } from "./modules/rate-limiter/rateLimiter.js";
+import { getEnv } from "./config/index.js";
 import usageRoutes from "./routes/usageRoutes.js";
 import apiKeyRoutes from "./routes/apiKeyRoutes.js";
 import planRoutes from "./routes/planRoutes.js";
@@ -18,6 +19,11 @@ declare module "express" {
 
 export function createApp(): express.Application {
   const app = express();
+  const env = getEnv();
+
+  if (env.TRUST_PROXY) {
+    app.enable("trust proxy");
+  }
 
   app.use(express.json({ limit: "64kb" }));
 

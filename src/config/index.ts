@@ -14,6 +14,8 @@ const EnvSchema = z.object({
 
   BOOTSTRAP_ACCOUNT_NAME: z.string().optional(),
   BOOTSTRAP_API_KEY_NAME: z.string().optional(),
+
+  TRUST_PROXY: z.coerce.boolean().default(false),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
