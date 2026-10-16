@@ -56,7 +56,7 @@ graph TD
 ### Key Design Decisions
 
 - **Pure Quota Evaluator**: `quotaEvaluator.ts` is a pure function with no DB/HTTP dependencies
-- **Sentinel Value for Counters**: `user_id = 0` represents account-level counters (avoids partial index ORM issues)
+- **Nullable user_id**: `NULL` user_id represents account-level counters (avoids partial index ORM issues; partial unique indexes enforce uniqueness per NULL vs non-NULL)
 - **Idempotency in `usage_requests`**: No separate table; unique constraint on `(account_id, idempotency_key)` + request hash
 - **Next-Month Plan Changes**: Plan changes take effect at next UTC month boundary to prevent mid-month quota gaming
 - **PostgreSQL Constraints as Source of Truth**: Exclusion constraints, triggers, partial unique indexes enforce invariants
@@ -466,7 +466,7 @@ npm run loadtest -- --duration 10 --connections 10 --pipelining 1 --units 1
 
 ## License
 
-MIT License — see `LICENSE` file (if present).
+No license specified. All rights reserved.
 
 ---
 
