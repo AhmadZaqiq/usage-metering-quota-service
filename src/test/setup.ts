@@ -11,7 +11,17 @@ import { dirname } from "path";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const TEST_DB_URL = process.env.TEST_DATABASE_URL || "postgresql://postgres:postgres@localhost:5432/usage_metering_test";
+const TEST_DB_URL =
+  process.env.TEST_DATABASE_URL ||
+  "postgresql://app:app_secret@localhost:5433/usage_metering_test";
+
+// Point the application's database client at the dedicated test database
+// before any test file imports service modules. Service modules create their
+// pooled pg client at import time from DATABASE_URL (src/db/client.ts), and
+// getEnv() caches the result (src/config/index.ts), so DATABASE_URL must be
+// set here - setup files are evaluated before test files - rather than only
+// in beforeAll, which would run too late.
+setTestEnv();
 
 let testPool: Pool;
 let testDb: NodePgDatabase<typeof schema>;
