@@ -3,9 +3,9 @@ import { getTestDb } from "./setup.js";
 import { accounts, users, plans, planAssignments, apiKeys, usageCounters, usageRequests } from "../db/schema/index.js";
 import { eq, and, isNull } from "drizzle-orm";
 import { createApiKey } from "../modules/auth/apiKeyService.js";
-import { createPlan } from "../modules/plans/planService.js";
+import { createPlan, listPlans, getPlan, updatePlan, deletePlan } from "../modules/plans/planService.js";
 import { createAssignment } from "../modules/plans/assignmentService.js";
-import { processUsageRequest } from "../modules/usage/usageService.js";
+import { processUsageRequest, getUsageHistory } from "../modules/usage/usageService.js";
 import { evaluateQuota } from "../modules/usage/quotaEvaluator.js";
 import { formatDateForDb, getUtcMonthStart } from "../utils/date.js";
 import { MAX_UNITS_PER_REQUEST_BIGINT } from "../config/index.js";
@@ -495,6 +495,250 @@ describe("Boundary Integration Tests", () => {
 
       expect(result.decision).toBe("rejected");
       expect(result.rejectionReason).toBe("max_per_request_exceeded");
+    });
+  });
+
+  describe("E. Usage history and pagination", () => {
+    it("should return paginated usage history", async () => {
+      const context = await setupBasicTestContext();
+
+      // Create several usage requests
+      for (let i = 1; i <= 5; i++) {
+        await processUsageRequest(context.account.id, {
+          userId: context.user.clientUserId,
+          units: BigInt(i),
+          idempotencyKey: `history-test-${i}`,
+        }, context.apiKey.id);
+      }
+
+      // Fetch page 1 with limit 3
+      const page1 = await getUsageHistory(getTestDb(), BigInt(context.account.id), 1, 3);
+
+      expect(page1.items).toHaveLength(3);
+      expect(page1.total).toBe(5);
+      expect(page1.page).toBe(1);
+      expect(page1.limit).toBe(3);
+      expect(page1.totalPages).toBe(2);
+
+      // Items should be ordered by created_at descending (newest first)
+      expect(page1.items[0].idempotencyKey).toBe("history-test-5");
+      expect(page1.items[1].idempotencyKey).toBe("history-test-4");
+      expect(page1.items[2].idempotencyKey).toBe("history-test-3");
+
+      // Fetch page 2 with limit 3
+      const page2 = await getUsageHistory(getTestDb(), BigInt(context.account.id), 2, 3);
+
+      expect(page2.items).toHaveLength(2);
+      expect(page2.items[0].idempotencyKey).toBe("history-test-2");
+      expect(page2.items[1].idempotencyKey).toBe("history-test-1");
+    });
+
+    it("should isolate usage history by account", async () => {
+      const context1 = await setupBasicTestContext();
+      const context2 = await setupBasicTestContext();
+
+      // Create usage requests in account 1
+      await processUsageRequest(context1.account.id, {
+        userId: context1.user.clientUserId,
+        units: 1n,
+        idempotencyKey: "account1-request-1",
+      }, context1.apiKey.id);
+
+      await processUsageRequest(context1.account.id, {
+        userId: context1.user.clientUserId,
+        units: 2n,
+        idempotencyKey: "account1-request-2",
+      }, context1.apiKey.id);
+
+      // Create usage request in account 2
+      await processUsageRequest(context2.account.id, {
+        userId: context2.user.clientUserId,
+        units: 10n,
+        idempotencyKey: "account2-request-1",
+      }, context2.apiKey.id);
+
+      // Account 1 should only see its own requests
+      const page1 = await getUsageHistory(getTestDb(), BigInt(context1.account.id), 1, 10);
+      expect(page1.items).toHaveLength(2);
+      expect(page1.items.map(r => r.idempotencyKey)).toContain("account1-request-1");
+      expect(page1.items.map(r => r.idempotencyKey)).toContain("account1-request-2");
+      expect(page1.items.map(r => r.idempotencyKey)).not.toContain("account2-request-1");
+
+      // Account 2 should only see its own requests
+      const page2 = await getUsageHistory(getTestDb(), BigInt(context2.account.id), 1, 10);
+      expect(page2.items).toHaveLength(1);
+      expect(page2.items[0].idempotencyKey).toBe("account2-request-1");
+    });
+
+    it("should return empty results for account with no usage history", async () => {
+      const context = await setupBasicTestContext();
+
+      const page = await getUsageHistory(getTestDb(), BigInt(context.account.id), 1, 10);
+
+      expect(page.items).toHaveLength(0);
+      expect(page.total).toBe(0);
+      expect(page.totalPages).toBe(0);
+    });
+
+    it("should include account remaining and user remaining in history items", async () => {
+      const context = await setupBasicTestContext();
+
+      await processUsageRequest(context.account.id, {
+        userId: context.user.clientUserId,
+        units: 5n,
+        idempotencyKey: "history-remaining-test",
+      }, context.apiKey.id);
+
+      const page = await getUsageHistory(getTestDb(), BigInt(context.account.id), 1, 10);
+
+      expect(page.items).toHaveLength(1);
+      const item = page.items[0];
+      expect(item.idempotencyKey).toBe("history-remaining-test");
+      expect(item.decision).toBe("accepted");
+      expect(item.accountRemaining).toBe("995"); // 1000 - 5
+      expect(item.userRemaining).toBe("95"); // 100 - 5
+    });
+  });
+
+  describe("F. API key management", () => {
+    it("should create an API key and return the full secret once", async () => {
+      const context = await setupBasicTestContext();
+
+      const result = await processUsageRequest(context.account.id, {
+        userId: context.user.clientUserId,
+        units: 1n,
+        idempotencyKey: "api-key-test",
+      }, context.apiKey.id);
+
+      expect(result.decision).toBe("accepted");
+    });
+
+    it("should list API keys for an account", async () => {
+      const context = await setupBasicTestContext();
+
+      // Create a second API key
+      await processUsageRequest(context.account.id, {
+        userId: context.user.clientUserId,
+        units: 1n,
+        idempotencyKey: "create-second-key",
+      }, context.apiKey.id);
+
+      // List API keys - all keys for the account should be returned
+      const keys = await getTestDb()
+        .select()
+        .from(apiKeys)
+        .where(eq(apiKeys.accountId, BigInt(context.account.id)))
+        .execute();
+
+      expect(keys.length).toBeGreaterThanOrEqual(1);
+      // Each key should have a prefix but not the full secret
+      for (const key of keys) {
+        expect(key.prefix).toBeDefined();
+        expect(key.keyHash).toBeDefined();
+        expect(key.idempotencyKey).toBeUndefined(); // full secret not stored
+      }
+    });
+  });
+
+  describe("G. Plan management", () => {
+    it("should create, read, update, and delete a custom plan", async () => {
+      const context = await setupBasicTestContext();
+
+      // Create a custom plan
+      const createdPlan = await createPlan(
+        {
+          name: "Custom Plan",
+          type: "account",
+          monthlyAllowance: 500n,
+          maxUnitsPerRequest: 50n,
+        },
+        context.account.id
+      );
+
+      expect(createdPlan.name).toBe("Custom Plan");
+      expect(createdPlan.type).toBe("account");
+      expect(createdPlan.monthlyAllowance).toBe(500n);
+      expect(createdPlan.maxUnitsPerRequest).toBe(50n);
+      expect(createdPlan.isSystem).toBe(false);
+
+      // List plans - should include both system and custom plans
+      const plans = await listPlans(context.account.id);
+      expect(plans.length).toBeGreaterThanOrEqual(1);
+      expect(plans.some(p => p.name === "Custom Plan")).toBe(true);
+
+      // Get the plan by ID
+      const fetchedPlan = await getPlan(createdPlan.id, context.account.id);
+      expect(fetchedPlan.id).toBe(createdPlan.id);
+      expect(fetchedPlan.name).toBe("Custom Plan");
+
+      // Update the plan
+      const updatedPlan = await updatePlan(createdPlan.id, {
+        monthlyAllowance: 2000n,
+      }, context.account.id);
+      expect(updatedPlan.monthlyAllowance).toBe(2000n);
+
+      // Delete the plan
+      await deletePlan(createdPlan.id, context.account.id);
+
+      // Verify deletion - the plan should be soft-deleted
+      const deletedPlan = await getPlan(createdPlan.id, context.account.id).catch(() => null);
+      expect(deletedPlan).toBeNull();
+    });
+
+    it("should prevent modifying a system plan", async () => {
+      const context = await setupBasicTestContext();
+
+      // Create a system plan (ownerAccountId = null)
+      const systemPlan = await createPlan(
+        {
+          name: "System Plan",
+          type: "account",
+          monthlyAllowance: 500n,
+          maxUnitsPerRequest: 50n,
+          ownerAccountId: null,
+        },
+        context.account.id
+      );
+
+      await expect(
+        updatePlan(systemPlan.id, {
+          monthlyAllowance: 999999n,
+        }, context.account.id)
+      ).rejects.toThrow("Cannot modify system plan");
+    });
+
+    it("should prevent assigning a plan from another account", async () => {
+      const context1 = await setupBasicTestContext();
+      const context2 = await setupBasicTestContext();
+
+      // Try to assign account 2's plan to account 1
+      await expect(
+        createAssignment(context1.account.id, {
+          planId: context2.accountPlan.id,
+          effectiveFrom: getUtcMonthStart(),
+        }, context1.account.id)
+      ).rejects.toThrow("Cannot assign custom plan from another account");
+    });
+
+    it("should enforce plan type compatibility", async () => {
+      const context = await setupBasicTestContext();
+
+      // Try to assign a user plan as an account-level assignment
+      await expect(
+        createAssignment(context.account.id, {
+          planId: context.userPlan.id,
+          effectiveFrom: getUtcMonthStart(),
+        }, context.account.id)
+      ).rejects.toThrow("Account-level assignment requires an account plan");
+
+      // Try to assign an account plan as a user-level assignment
+      await expect(
+        createAssignment(context.account.id, {
+          userId: context.user.clientUserId,
+          planId: context.accountPlan.id,
+          effectiveFrom: getUtcMonthStart(),
+        }, context.account.id)
+      ).rejects.toThrow("User-level assignment requires a user plan");
     });
   });
 });

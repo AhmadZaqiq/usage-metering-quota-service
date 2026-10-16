@@ -316,3 +316,76 @@ async function getCurrentUserPlan(
     maxUnitsPerRequest: BigInt(assignment[0].maxUnitsPerRequest),
   };
 }
+
+export interface UsageHistoryItem {
+  id: string;
+  userId: string | null;
+  units: string;
+  decision: string;
+  rejectionReason: string | null;
+  periodStart: string;
+  accountRemaining: string | null;
+  userRemaining: string | null;
+  createdAt: string;
+}
+
+export interface UsageHistoryResult {
+  items: UsageHistoryItem[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+export async function getUsageHistory(
+  tx: Transaction,
+  accountId: bigint,
+  page: number,
+  limit: number
+): Promise<UsageHistoryResult> {
+  const offset = (page - 1) * limit;
+
+  const [rows, countResult] = await Promise.all([
+    tx.execute(sql`
+      SELECT id, user_id as "userId", idempotency_key as "idempotencyKey", units, decision, rejection_reason as "rejectionReason",
+             period_start as "periodStart", account_remaining as "accountRemaining",
+             user_remaining as "userRemaining", created_at as "createdAt"
+      FROM usage_requests
+      WHERE account_id = ${accountId}
+      ORDER BY created_at DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `),
+    tx.execute(sql`
+      SELECT count(*) as "count" FROM usage_requests WHERE account_id = ${accountId}
+    `),
+  ]);
+
+  const items: UsageHistoryItem[] = (rows.rows as Array<{
+    id: bigint;
+    userId: bigint | null;
+    idempotencyKey: string;
+    units: bigint;
+    decision: string;
+    rejectionReason: string | null;
+    periodStart: string;
+    accountRemaining: bigint | null;
+    userRemaining: bigint | null;
+    createdAt: string | Date;
+    }>).map((row) => ({
+      id: row.id.toString(),
+      userId: row.userId ? row.userId.toString() : null,
+      idempotencyKey: row.idempotencyKey,
+      units: row.units.toString(),
+      decision: row.decision,
+      rejectionReason: row.rejectionReason,
+      periodStart: row.periodStart,
+      accountRemaining: row.accountRemaining ? row.accountRemaining.toString() : null,
+      userRemaining: row.userRemaining ? row.userRemaining.toString() : null,
+      createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
+  }));
+
+  const total = Number((countResult.rows as Array<{ count: string }>)[0].count);
+  const totalPages = Math.ceil(total / limit);
+
+  return { items, total, page, limit, totalPages };
+}

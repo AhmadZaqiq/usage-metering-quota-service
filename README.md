@@ -258,6 +258,8 @@ MAX_UNITS_PER_REQUEST=10000
 RATE_LIMIT_WINDOW_MS=60000
 RATE_LIMIT_MAX=100
 LOG_LEVEL=debug
+REDIS_URL=redis://redis:6379
+TRUST_PROXY=false
 ```
 
 ### Docker Compose (Recommended)
@@ -425,6 +427,7 @@ src/
 - **Request Size Limit**: 64KB body limit
 - **CORS**: Configured for intended origins (adjust for production)
 - **HTTPS**: Terminates at reverse proxy in production (not included)
+- **Proxy Trust**: `TRUST_PROXY=true` only when behind a trusted reverse proxy; otherwise forwarded headers (e.g., `X-Forwarded-For`) could be spoofed by clients
 - **Input Validation**: Zod schemas at all boundaries
 
 ---

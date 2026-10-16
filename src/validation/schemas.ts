@@ -40,3 +40,8 @@ export const createUserSchema = z.object({
 export const idParamSchema = z.object({
   id: z.string().regex(/^\d+$/).transform((v) => parseInt(v, 10)),
 });
+
+export const usageHistorySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
