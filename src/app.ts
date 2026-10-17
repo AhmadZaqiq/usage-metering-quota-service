@@ -5,6 +5,7 @@ import { logger, createRequestLogger } from "./logging/logger.js";
 import { createRateLimiterMiddleware, closeRateLimiterStore } from "./infrastructure/rateLimiter.js";
 import { getEnv } from "./config/index.js";
 import { asyncHandler } from "./presentation/middleware/asyncHandler.js";
+import { NotFoundError } from "./errors/AppError.js";
 import usageRoutes from "./presentation/routes/usageRoutes.js";
 import apiKeyRoutes from "./presentation/routes/apiKeyRoutes.js";
 import planRoutes from "./presentation/routes/planRoutes.js";
@@ -66,7 +67,7 @@ export function createApp(): express.Application {
   app.use("/users", asyncHandler(authMiddleware), userRoutes);
 
   app.use((_req: Request, _res: Response, next: NextFunction) => {
-    next(new Error("NOT_FOUND"));
+    next(new NotFoundError());
   });
 
   app.use(errorHandler);
