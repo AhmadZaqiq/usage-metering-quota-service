@@ -5,7 +5,8 @@ import { eq, and, isNull } from "drizzle-orm";
 import { createApiKey, revokeApiKey } from "../modules/auth/apiKeyService.js";
 import { createPlan, listPlans, getPlan, updatePlan, deletePlan } from "../modules/plans/planService.js";
 import { createAssignment } from "../modules/plans/assignmentService.js";
-import { processUsageRequest, getUsageHistory } from "../modules/usage/usageService.js";
+import { processUsageRequest } from "../modules/usage/usageService.js";
+import { getUsageHistory } from "../modules/usage/usageHistoryService.js";
 import { evaluateQuota } from "../modules/usage/quotaEvaluator.js";
 import { formatDateForDb, getUtcMonthStart } from "../utils/date.js";
 import { MAX_UNITS_PER_REQUEST_BIGINT } from "../config/index.js";
@@ -512,7 +513,7 @@ describe("Boundary Integration Tests", () => {
       }
 
       // Fetch page 1 with limit 3
-      const page1 = await getUsageHistory(getTestDb(), BigInt(context.account.id), 1, 3);
+      const page1 = await getUsageHistory(BigInt(context.account.id), 1, 3);
 
       expect(page1.items).toHaveLength(3);
       expect(page1.total).toBe(5);
@@ -526,7 +527,7 @@ describe("Boundary Integration Tests", () => {
       expect(page1.items[2].idempotencyKey).toBe("history-test-3");
 
       // Fetch page 2 with limit 3
-      const page2 = await getUsageHistory(getTestDb(), BigInt(context.account.id), 2, 3);
+      const page2 = await getUsageHistory(BigInt(context.account.id), 2, 3);
 
       expect(page2.items).toHaveLength(2);
       expect(page2.items[0].idempotencyKey).toBe("history-test-2");
@@ -558,14 +559,14 @@ describe("Boundary Integration Tests", () => {
       }, context2.apiKey.id);
 
       // Account 1 should only see its own requests
-      const page1 = await getUsageHistory(getTestDb(), BigInt(context1.account.id), 1, 10);
+      const page1 = await getUsageHistory(BigInt(context1.account.id), 1, 10);
       expect(page1.items).toHaveLength(2);
       expect(page1.items.map(r => r.idempotencyKey)).toContain("account1-request-1");
       expect(page1.items.map(r => r.idempotencyKey)).toContain("account1-request-2");
       expect(page1.items.map(r => r.idempotencyKey)).not.toContain("account2-request-1");
 
       // Account 2 should only see its own requests
-      const page2 = await getUsageHistory(getTestDb(), BigInt(context2.account.id), 1, 10);
+      const page2 = await getUsageHistory(BigInt(context2.account.id), 1, 10);
       expect(page2.items).toHaveLength(1);
       expect(page2.items[0].idempotencyKey).toBe("account2-request-1");
     });
@@ -573,7 +574,7 @@ describe("Boundary Integration Tests", () => {
     it("should return empty results for account with no usage history", async () => {
       const context = await setupBasicTestContext();
 
-      const page = await getUsageHistory(getTestDb(), BigInt(context.account.id), 1, 10);
+      const page = await getUsageHistory(BigInt(context.account.id), 1, 10);
 
       expect(page.items).toHaveLength(0);
       expect(page.total).toBe(0);
@@ -589,7 +590,7 @@ describe("Boundary Integration Tests", () => {
         idempotencyKey: "history-remaining-test",
       }, context.apiKey.id);
 
-      const page = await getUsageHistory(getTestDb(), BigInt(context.account.id), 1, 10);
+      const page = await getUsageHistory(BigInt(context.account.id), 1, 10);
 
       expect(page.items).toHaveLength(1);
       const item = page.items[0];

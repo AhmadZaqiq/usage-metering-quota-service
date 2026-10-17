@@ -1,6 +1,13 @@
-import { db } from "../db/client.js";
-import { accounts, apiKeys, plans, planAssignments } from "../db/schema/index.js";
-import { and, eq, isNull } from "drizzle-orm";
+import {
+  selectAccountByName,
+  insertAccount,
+} from "../modules/accounts/accountRepository.js";
+import {
+  selectPlanByAccountAndName,
+} from "../modules/plans/planRepository.js";
+import {
+  selectCurrentAssignmentByAccount,
+} from "../modules/plans/assignmentRepository.js";
 import { createApiKey } from "../modules/auth/apiKeyService.js";
 import { createAssignment } from "../modules/plans/assignmentService.js";
 import { createPlan } from "../modules/plans/planService.js";
@@ -8,26 +15,16 @@ import { getEnv, MAX_UNITS_PER_REQUEST_BIGINT } from "../config/index.js";
 import { logger } from "../logging/logger.js";
 import { getUtcMonthStart } from "../utils/date.js";
 import * as fs from "fs";
+import { db } from "../db/client.js";
 
 const DEFAULT_PLAN_NAME = "Default Plan";
 const DEFAULT_MONTHLY_ALLOWANCE = 10_000n;
 
-async function ensureDefaultPlan(accountId: number): Promise<number> {
-  const existing = await db
-    .select({ id: plans.id })
-    .from(plans)
-    .where(
-      and(
-        eq(plans.ownerAccountId, BigInt(accountId)),
-        eq(plans.name, DEFAULT_PLAN_NAME),
-        isNull(plans.deletedAt)
-      )
-    )
-    .limit(1)
-    .execute();
+async function ensureDefaultPlan(accountId: bigint): Promise<number> {
+  const existing = await selectPlanByAccountAndName(db, accountId, DEFAULT_PLAN_NAME);
 
-  if (existing.length > 0) {
-    return Number(existing[0].id);
+  if (existing) {
+    return Number(existing.id);
   }
 
   const plan = await createPlan(
@@ -37,34 +34,23 @@ async function ensureDefaultPlan(accountId: number): Promise<number> {
       monthlyAllowance: DEFAULT_MONTHLY_ALLOWANCE,
       maxUnitsPerRequest: MAX_UNITS_PER_REQUEST_BIGINT,
     },
-    accountId
+    Number(accountId as unknown as number)
   );
 
   return plan.id;
 }
 
-async function ensureDefaultAssignment(accountId: number, planId: number): Promise<void> {
-  const current = await db
-    .select({ id: planAssignments.id })
-    .from(planAssignments)
-    .where(
-      and(
-        eq(planAssignments.accountId, BigInt(accountId)),
-        isNull(planAssignments.userId),
-        isNull(planAssignments.effectiveTo)
-      )
-    )
-    .limit(1)
-    .execute();
+async function ensureDefaultAssignment(accountId: bigint, planId: number): Promise<void> {
+  const current = await selectCurrentAssignmentByAccount(db, accountId);
 
-  if (current.length > 0) {
+  if (current) {
     return;
   }
 
-  await createAssignment(accountId, {
+  await createAssignment(Number(accountId as unknown as number), {
     planId,
     effectiveFrom: getUtcMonthStart(),
-  }, accountId);
+  }, Number(accountId as unknown as number));
 }
 
 export async function bootstrap(): Promise<void> {
@@ -78,32 +64,23 @@ export async function bootstrap(): Promise<void> {
     return;
   }
 
-  const existing = await db
-    .select({ id: accounts.id })
-    .from(accounts)
-    .where(eq(accounts.name, bootstrapAccountName))
-    .limit(1)
-    .execute();
+  const existing = await selectAccountByName(db, bootstrapAccountName);
 
   let accountId: bigint;
 
-  if (existing.length > 0) {
-    accountId = existing[0].id;
+  if (existing) {
+    accountId = existing.id;
     logger.info({ accountId: accountId.toString() }, "Bootstrap account already exists");
   } else {
-    const [account] = await db
-      .insert(accounts)
-      .values({ name: bootstrapAccountName })
-      .returning({ id: accounts.id })
-      .execute();
+    const account = await insertAccount(db, bootstrapAccountName);
     accountId = account.id;
     logger.info({ accountId: accountId.toString() }, "Bootstrap account created");
   }
 
-  const planId = await ensureDefaultPlan(Number(accountId));
-  await ensureDefaultAssignment(Number(accountId), planId);
+  const planId = await ensureDefaultPlan(accountId);
+  await ensureDefaultAssignment(accountId, planId);
 
-  const keyResult = await createApiKey(Number(accountId), bootstrapApiKeyName);
+  const keyResult = await createApiKey(    Number(accountId as unknown as number), bootstrapApiKeyName);
   logger.info({ prefix: keyResult.prefix }, "Bootstrap API key created");
 
   // Persist the bootstrapped key to the shared secrets volume so the client

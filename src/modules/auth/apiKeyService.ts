@@ -1,7 +1,10 @@
 import { db } from "../../db/client.js";
-import { apiKeys, accounts } from "../../db/schema/index.js";
-import { eq, and } from "drizzle-orm";
-import { generateApiKey, verifyApiKeyHash } from "../../utils/hash.js";
+import {
+  insertApiKey,
+  selectApiKeysByAccount,
+  updateApiKeyRevoked,
+} from "./apiKeyRepository.js";
+import { generateApiKey } from "../../utils/hash.js";
 import { NotFoundError } from "../../errors/AppError.js";
 
 export interface ApiKeyInfo {
@@ -23,18 +26,8 @@ export interface CreateApiKeyResult {
 export async function createApiKey(accountId: number, name?: string): Promise<CreateApiKeyResult> {
   const { fullKey, prefix, hash } = generateApiKey();
 
-  const [key] = await db
-    .insert(apiKeys)
-    .values({
-      accountId: BigInt(accountId),
-      prefix,
-      keyHash: hash,
-      name: name ?? null,
-    })
-    .returning({ id: apiKeys.id, prefix: apiKeys.prefix, name: apiKeys.name })
-    .execute();
+  const key = await insertApiKey(db, BigInt(accountId), prefix, hash, name ?? null);
 
-  // key is guaranteed to exist since insert succeeded
   return {
     id: Number(key.id),
     prefix: key.prefix,
@@ -44,18 +37,7 @@ export async function createApiKey(accountId: number, name?: string): Promise<Cr
 }
 
 export async function listApiKeys(accountId: number): Promise<ApiKeyInfo[]> {
-  const keys = await db
-    .select({
-      id: apiKeys.id,
-      prefix: apiKeys.prefix,
-      name: apiKeys.name,
-      isRevoked: apiKeys.isRevoked,
-      createdAt: apiKeys.createdAt,
-      lastUsedAt: apiKeys.lastUsedAt,
-    })
-    .from(apiKeys)
-    .where(eq(apiKeys.accountId, BigInt(accountId)))
-    .execute();
+  const keys = await selectApiKeysByAccount(db, BigInt(accountId));
 
   return keys.map((k) => ({
     id: Number(k.id),
@@ -68,54 +50,9 @@ export async function listApiKeys(accountId: number): Promise<ApiKeyInfo[]> {
 }
 
 export async function revokeApiKey(accountId: number, keyId: number): Promise<void> {
-  const result = await db
-    .update(apiKeys)
-    .set({ isRevoked: true, revokedAt: new Date() })
-    .where(and(eq(apiKeys.id, BigInt(keyId)), eq(apiKeys.accountId, BigInt(accountId))))
-    .execute();
+  const result = await updateApiKeyRevoked(db, BigInt(keyId), BigInt(accountId));
 
   if (result.rowCount === 0) {
     throw new NotFoundError("API key not found");
   }
-}
-
-export interface VerifiedApiKey {
-  accountId: number;
-  apiKeyId: number;
-}
-
-export async function verifyApiKey(fullKey: string): Promise<VerifiedApiKey | null> {
-  const parts = fullKey.split(".");
-  if (parts.length !== 2) return null;
-
-  const [prefix, secret] = parts;
-  if (!prefix || !secret) return null;
-
-  const key = await db
-    .select({
-      id: apiKeys.id,
-      accountId: apiKeys.accountId,
-      keyHash: apiKeys.keyHash,
-      isRevoked: apiKeys.isRevoked,
-      accountIsActive: accounts.isActive,
-      accountDeletedAt: accounts.deletedAt,
-    })
-    .from(apiKeys)
-    .innerJoin(accounts, eq(apiKeys.accountId, accounts.id))
-    .where(and(eq(apiKeys.prefix, prefix), eq(apiKeys.isRevoked, false)))
-    .limit(1)
-    .execute();
-
-  if (key.length === 0) return null;
-
-  const record = key[0];
-
-  if (!record.accountIsActive || record.accountDeletedAt) return null;
-
-  if (!verifyApiKeyHash(secret, record.keyHash)) return null;
-
-  return {
-    accountId: Number(record.accountId),
-    apiKeyId: Number(record.id),
-  };
 }

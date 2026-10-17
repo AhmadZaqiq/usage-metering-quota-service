@@ -21,6 +21,7 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         accountUsed: 995n,
         userUsed: 0n,
         requestedUnits: 5n,
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
       expect(result.decision).toBe("accepted");
@@ -34,6 +35,7 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         accountUsed: 995n,
         userUsed: 0n,
         requestedUnits: 6n,
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
       expect(result.decision).toBe("rejected");
@@ -48,6 +50,7 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         accountUsed: 1000n,
         userUsed: 0n,
         requestedUnits: 1n,
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
       expect(result.decision).toBe("rejected");
@@ -63,6 +66,7 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         accountUsed: 1005n,
         userUsed: 0n,
         requestedUnits: 1n,
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
       expect(result.decision).toBe("rejected");
@@ -79,6 +83,7 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         accountUsed: 500n,
         userUsed: 95n,
         requestedUnits: 5n,
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
       expect(result.decision).toBe("accepted");
@@ -92,6 +97,7 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         accountUsed: 500n,
         userUsed: 95n,
         requestedUnits: 6n,
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
       expect(result.decision).toBe("rejected");
@@ -108,6 +114,7 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         accountUsed: 998n,
         userUsed: 98n,
         requestedUnits: 3n,
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
       expect(result.decision).toBe("rejected");
@@ -123,6 +130,7 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         accountUsed: 0n,
         userUsed: 0n,
         requestedUnits: 100n, // Exactly at limit
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
       expect(result.decision).toBe("accepted");
@@ -135,6 +143,7 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         accountUsed: 0n,
         userUsed: 0n,
         requestedUnits: 101n, // 1 over limit
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
       expect(result.decision).toBe("rejected");
@@ -148,6 +157,7 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         accountUsed: 0n,
         userUsed: 0n,
         requestedUnits: 0n,
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
       expect(result.decision).toBe("rejected");
@@ -161,6 +171,7 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         accountUsed: 0n,
         userUsed: 0n,
         requestedUnits: -1n,
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
       expect(result.decision).toBe("rejected");
@@ -174,6 +185,7 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         accountUsed: 0n,
         userUsed: 0n,
         requestedUnits: MAX_UNITS_PER_REQUEST_BIGINT + 1n,
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
       expect(result.decision).toBe("rejected");
@@ -187,6 +199,7 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         accountUsed: 0n,
         userUsed: 0n,
         requestedUnits: 15n, // Over user limit (10) but under account limit (50)
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
       expect(result.decision).toBe("rejected");
@@ -205,6 +218,7 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         accountUsed: 0n,
         userUsed: 0n,
         requestedUnits: MAX_UNITS_PER_REQUEST_BIGINT, // Max allowed
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
       expect(result.decision).toBe("accepted");
@@ -218,6 +232,7 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         accountUsed: 9999999999999999n,
         userUsed: 99999999999999n,
         requestedUnits: 1n,
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
       expect(result.decision).toBe("accepted");

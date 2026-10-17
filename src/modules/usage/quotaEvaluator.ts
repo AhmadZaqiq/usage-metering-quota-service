@@ -1,5 +1,3 @@
-import { MAX_UNITS_PER_REQUEST_BIGINT } from "../../config/index.js";
-
 export interface PlanQuota {
   monthlyAllowance: bigint;
   maxUnitsPerRequest: bigint;
@@ -11,6 +9,7 @@ export interface QuotaInput {
   accountUsed: bigint;
   userUsed: bigint;
   requestedUnits: bigint;
+  maxUnitsPerRequestLimit: bigint;
 }
 
 export type RejectionReason =
@@ -26,7 +25,7 @@ export interface QuotaResult {
 }
 
 export function evaluateQuota(input: QuotaInput): QuotaResult {
-  const { accountPlan, userPlan, accountUsed, userUsed, requestedUnits } = input;
+  const { accountPlan, userPlan, accountUsed, userUsed, requestedUnits, maxUnitsPerRequestLimit } = input;
 
   if (requestedUnits <= 0n) {
     return {
@@ -37,7 +36,7 @@ export function evaluateQuota(input: QuotaInput): QuotaResult {
     };
   }
 
-  if (requestedUnits > MAX_UNITS_PER_REQUEST_BIGINT) {
+  if (requestedUnits > maxUnitsPerRequestLimit) {
     return {
       decision: "rejected",
       rejectionReason: "max_per_request_exceeded",

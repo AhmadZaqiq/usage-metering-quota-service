@@ -1,6 +1,11 @@
-import { db } from "../../db/client.js";
-import { plans } from "../../db/schema/index.js";
-import { eq, and, isNull, or } from "drizzle-orm";
+import { db, withTransaction } from "../../db/client.js";
+import {
+  insertPlan,
+  selectPlans,
+  selectPlanById,
+  updatePlan as updatePlanRow,
+  softDeletePlan,
+} from "./planRepository.js";
 import { NotFoundError, AuthorizationError, ValidationError } from "../../errors/AppError.js";
 import { MAX_UNITS_PER_REQUEST_BIGINT } from "../../config/index.js";
 
@@ -36,59 +41,32 @@ export async function createPlan(input: CreatePlanInput, requestingAccountId: nu
     throw new ValidationError(`Max units per request cannot exceed ${MAX_UNITS_PER_REQUEST_BIGINT}`);
   }
 
-  // If ownerAccountId is explicitly provided (including null), use it.
-  // If not provided (undefined), default to requesting account (custom plan).
   const hasExplicitOwner = input.ownerAccountId !== undefined;
   const ownerAccountId = input.ownerAccountId ?? requestingAccountId;
-  // System plan only if explicitly set to null
 
   if (hasExplicitOwner && ownerAccountId !== null && ownerAccountId !== requestingAccountId) {
     throw new AuthorizationError("Cannot create custom plan for another account");
   }
 
-  const [plan] = await db
-    .insert(plans)
-    .values({
-      name: input.name,
-      type: input.type,
-      ownerAccountId: hasExplicitOwner ? (input.ownerAccountId === null ? null : BigInt(ownerAccountId)) : BigInt(requestingAccountId),
-      monthlyAllowance: input.monthlyAllowance,
-      maxUnitsPerRequest: input.maxUnitsPerRequest,
-    })
-    .returning()
-    .execute();
+  const plan = await insertPlan(
+    db,
+    input.name,
+    input.type,
+    hasExplicitOwner ? (input.ownerAccountId === null ? null : BigInt(ownerAccountId)) : BigInt(requestingAccountId),
+    input.monthlyAllowance,
+    input.maxUnitsPerRequest,
+  );
 
   return mapPlan(plan);
 }
 
 export async function listPlans(requestingAccountId: number): Promise<PlanInfo[]> {
-  const results = await db
-    .select()
-    .from(plans)
-    .where(
-      or(
-        isNull(plans.ownerAccountId),
-        and(eq(plans.ownerAccountId, BigInt(requestingAccountId)), isNull(plans.deletedAt))
-      )
-    )
-    .execute();
-
+  const results = await selectPlans(db, BigInt(requestingAccountId));
   return results.map(mapPlan);
 }
 
 export async function getPlan(planId: number, requestingAccountId: number): Promise<PlanInfo> {
-  const [plan] = await db
-    .select()
-    .from(plans)
-    .where(
-      and(
-        eq(plans.id, BigInt(planId)),
-        or(isNull(plans.ownerAccountId), eq(plans.ownerAccountId, BigInt(requestingAccountId))),
-        isNull(plans.deletedAt)
-      )
-    )
-    .limit(1)
-    .execute();
+  const plan = await selectPlanById(db, BigInt(planId), BigInt(requestingAccountId));
 
   if (!plan) {
     throw new NotFoundError("Plan not found");
@@ -109,62 +87,65 @@ export async function updatePlan(
   input: UpdatePlanInput,
   requestingAccountId: number
 ): Promise<PlanInfo> {
-  const plan = await getPlan(planId, requestingAccountId);
+  return await withTransaction(async (tx) => {
+    const plan = await selectPlanById(tx, BigInt(planId), BigInt(requestingAccountId));
 
-  if (plan.ownerAccountId && plan.ownerAccountId !== requestingAccountId) {
-    throw new AuthorizationError("Cannot modify plan owned by another account");
-  }
-  if (!plan.ownerAccountId) {
-    throw new AuthorizationError("Cannot modify system plan");
-  }
-
-  if (input.monthlyAllowance !== undefined && input.monthlyAllowance <= 0n) {
-    throw new ValidationError("Monthly allowance must be positive");
-  }
-  if (input.maxUnitsPerRequest !== undefined) {
-    if (input.maxUnitsPerRequest <= 0n) {
-      throw new ValidationError("Max units per request must be positive");
+    if (!plan) {
+      throw new NotFoundError("Plan not found");
     }
-    if (input.maxUnitsPerRequest > MAX_UNITS_PER_REQUEST_BIGINT) {
-      throw new ValidationError(`Max units per request cannot exceed ${MAX_UNITS_PER_REQUEST_BIGINT}`);
+
+    if (plan.ownerAccountId && plan.ownerAccountId !== BigInt(requestingAccountId)) {
+      throw new AuthorizationError("Cannot modify plan owned by another account");
     }
-  }
+    if (!plan.ownerAccountId) {
+      throw new AuthorizationError("Cannot modify system plan");
+    }
 
-  const updates: Record<string, unknown> = {};
-  if (input.name !== undefined) updates.name = input.name;
-  if (input.monthlyAllowance !== undefined) updates.monthlyAllowance = input.monthlyAllowance;
-  if (input.maxUnitsPerRequest !== undefined) updates.maxUnitsPerRequest = input.maxUnitsPerRequest;
-  if (input.isActive !== undefined) updates.isActive = input.isActive;
-  updates.updatedAt = new Date();
+    if (input.monthlyAllowance !== undefined && input.monthlyAllowance <= 0n) {
+      throw new ValidationError("Monthly allowance must be positive");
+    }
+    if (input.maxUnitsPerRequest !== undefined) {
+      if (input.maxUnitsPerRequest <= 0n) {
+        throw new ValidationError("Max units per request must be positive");
+      }
+      if (input.maxUnitsPerRequest > MAX_UNITS_PER_REQUEST_BIGINT) {
+        throw new ValidationError(`Max units per request cannot exceed ${MAX_UNITS_PER_REQUEST_BIGINT}`);
+      }
+    }
 
-  const [updated] = await db
-    .update(plans)
-    .set(updates)
-    .where(eq(plans.id, BigInt(planId)))
-    .returning()
-    .execute();
+    const updates: Record<string, unknown> = {};
+    if (input.name !== undefined) updates.name = input.name;
+    if (input.monthlyAllowance !== undefined) updates.monthlyAllowance = input.monthlyAllowance;
+    if (input.maxUnitsPerRequest !== undefined) updates.maxUnitsPerRequest = input.maxUnitsPerRequest;
+    if (input.isActive !== undefined) updates.isActive = input.isActive;
+    updates.updatedAt = new Date();
 
-  return mapPlan(updated);
+    const updated = await updatePlanRow(tx, BigInt(planId), updates);
+
+    return mapPlan(updated);
+  });
 }
 
 export async function deletePlan(planId: number, requestingAccountId: number): Promise<void> {
-  const plan = await getPlan(planId, requestingAccountId);
+  return await withTransaction(async (tx) => {
+    const plan = await selectPlanById(tx, BigInt(planId), BigInt(requestingAccountId));
 
-  if (plan.ownerAccountId && plan.ownerAccountId !== requestingAccountId) {
-    throw new AuthorizationError("Cannot delete plan owned by another account");
-  }
-  if (!plan.ownerAccountId) {
-    throw new AuthorizationError("Cannot delete system plan");
-  }
+    if (!plan) {
+      throw new NotFoundError("Plan not found");
+    }
 
-  await db
-    .update(plans)
-    .set({ deletedAt: new Date(), isActive: false, updatedAt: new Date() })
-    .where(eq(plans.id, BigInt(planId)))
-    .execute();
+    if (plan.ownerAccountId && plan.ownerAccountId !== BigInt(requestingAccountId)) {
+      throw new AuthorizationError("Cannot delete plan owned by another account");
+    }
+    if (!plan.ownerAccountId) {
+      throw new AuthorizationError("Cannot delete system plan");
+    }
+
+    await softDeletePlan(tx, BigInt(planId));
+  });
 }
 
-function mapPlan(p: typeof plans.$inferSelect): PlanInfo {
+function mapPlan(p: { id: bigint; name: string; type: string; ownerAccountId: bigint | null; monthlyAllowance: bigint; maxUnitsPerRequest: bigint; isActive: boolean; createdAt: Date; updatedAt: Date; deletedAt: Date | null }): PlanInfo {
   return {
     id: Number(p.id),
     name: p.name,

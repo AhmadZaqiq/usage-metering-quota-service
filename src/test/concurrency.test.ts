@@ -3,6 +3,7 @@ import { getTestDb } from "./setup.js";
 import { accounts, users, plans, planAssignments, apiKeys, usageCounters, usageRequests } from "../db/schema/index.js";
 import { eq, and, isNull } from "drizzle-orm";
 import { createApiKey } from "../modules/auth/apiKeyService.js";
+import { createUser } from "../modules/users/userService.js";
 import { createPlan } from "../modules/plans/planService.js";
 import { createAssignment } from "../modules/plans/assignmentService.js";
 import { processUsageRequest } from "../modules/usage/usageService.js";
@@ -435,5 +436,99 @@ describe("Concurrency Integration Tests", () => {
 
       expect(result2.decision).toBe("accepted");
     });
+  });
+
+  describe("E. Concurrent assignment creation", () => {
+    it("should not create overlapping account-level assignments concurrently", async () => {
+      const context = await setupBasicTestContext();
+      const { account, apiKey } = context;
+
+      // Create an account plan
+      const plan = await createPlan(
+        { name: "Concurrent Plan", type: "account", monthlyAllowance: 1000n, maxUnitsPerRequest: 100n },
+        account.id
+      );
+
+      // Delete any existing account-level assignment so we start clean
+      const db = getTestDb();
+      await db
+        .delete(planAssignments)
+        .where(
+          and(
+            eq(planAssignments.accountId, BigInt(account.id)),
+            isNull(planAssignments.userId)
+          )
+        )
+        .execute();
+
+      // Fire two concurrent requests to assign the same plan at account level
+      const requests = [
+        createAssignment(account.id, { planId: plan.id, effectiveFrom: getUtcMonthStart() }, account.id),
+        createAssignment(account.id, { planId: plan.id, effectiveFrom: getUtcMonthStart() }, account.id),
+      ];
+
+      const results = await Promise.allSettled(requests);
+
+      const fulfilled = results.filter(r => r.status === "fulfilled");
+      const rejected = results.filter(r => r.status === "rejected");
+
+      // Exactly one should succeed, one should fail with ConflictError
+      expect(fulfilled.length).toBe(1);
+      expect(rejected.length).toBe(1);
+      expect(rejected[0].reason?.message).toContain("Overlapping assignment exists");
+
+      // Verify only one assignment exists in the database
+      const assignments = await db
+        .select()
+        .from(planAssignments)
+        .where(
+          and(
+            eq(planAssignments.accountId, BigInt(account.id)),
+            isNull(planAssignments.userId),
+            isNull(planAssignments.effectiveTo)
+          )
+        )
+        .execute();
+
+      expect(assignments.length).toBe(1);
+    }, 30000);
+  });
+
+  describe("F. Concurrent user creation", () => {
+    it("should not create duplicate users with same (accountId, clientUserId) concurrently", async () => {
+      const context = await setupBasicTestContext();
+      const { account } = context;
+
+      // Fire two concurrent requests to create the same user
+      const requests = [
+        createUser(account.id, "duplicate-user"),
+        createUser(account.id, "duplicate-user"),
+      ];
+
+      const results = await Promise.allSettled(requests);
+
+      const fulfilled = results.filter(r => r.status === "fulfilled");
+      const rejected = results.filter(r => r.status === "rejected");
+
+      // Exactly one should succeed, one should fail with ValidationError
+      expect(fulfilled.length).toBe(1);
+      expect(rejected.length).toBe(1);
+      expect(rejected[0].reason?.message).toContain("User with this identifier already exists");
+
+      // Verify only one user exists in the database
+      const dbUsers = await getTestDb()
+        .select()
+        .from(users)
+        .where(
+          and(
+            eq(users.accountId, BigInt(account.id)),
+            eq(users.clientUserId, "duplicate-user"),
+            isNull(users.deletedAt)
+          )
+        )
+        .execute();
+
+      expect(dbUsers.length).toBe(1);
+    }, 30000);
   });
 });

@@ -1,5 +1,6 @@
 import { Router, Response, Request } from "express";
-import { createAssignment, listAssignments, getCurrentAssignments } from "../modules/plans/assignmentService.js";
+import { createAssignment } from "../modules/plans/assignmentService.js";
+import { listAssignments, getCurrentAssignments } from "../modules/plans/assignmentHistoryService.js";
 import { asyncHandler } from "../utils/index.js";
 import { createAssignmentSchema } from "../validation/schemas.js";
 import { AuthenticatedRequest } from "../modules/auth/authMiddleware.js";

@@ -1,6 +1,6 @@
 import { Router, Response, Request } from "express";
-import { processUsageRequest, getUsageHistory } from "../modules/usage/usageService.js";
-import { withTransaction } from "../db/client.js";
+import { processUsageRequest } from "../modules/usage/usageService.js";
+import { getUsageHistory } from "../modules/usage/usageHistoryService.js";
 import { asyncHandler } from "../utils/index.js";
 import { usageRequestSchema, usageHistorySchema } from "../validation/schemas.js";
 import { AuthenticatedRequest } from "../modules/auth/authMiddleware.js";
@@ -47,9 +47,7 @@ router.get(
 
     const { page, limit } = parsed.data;
 
-    const result = await withTransaction(async (tx) => {
-      return getUsageHistory(tx, BigInt(authReq.account.id), page, limit);
-    });
+    const result = await getUsageHistory(BigInt(authReq.account.id), page, limit);
 
     return res.json({
       items: result.items,

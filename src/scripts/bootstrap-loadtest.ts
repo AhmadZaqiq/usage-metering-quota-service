@@ -1,12 +1,25 @@
-import { db } from "../db/client.js";
-import { accounts, users, plans, planAssignments } from "../db/schema/index.js";
-import { eq, and, isNull } from "drizzle-orm";
+import {
+  selectAccountByName,
+  insertAccount,
+} from "../modules/accounts/accountRepository.js";
+import {
+  selectPlanByAccountAndName,
+} from "../modules/plans/planRepository.js";
+import {
+  deleteAssignmentsByAccount,
+  selectCurrentAssignmentByAccount,
+} from "../modules/plans/assignmentRepository.js";
+import {
+  selectUserByAccountAndClientUserId,
+  insertUser,
+} from "../modules/users/userRepository.js";
 import { createApiKey } from "../modules/auth/apiKeyService.js";
-import { createPlan } from "../modules/plans/planService.js";
 import { createAssignment } from "../modules/plans/assignmentService.js";
+import { createPlan } from "../modules/plans/planService.js";
 import { getEnv } from "../config/index.js";
 import { getUtcMonthStart } from "../utils/date.js";
 import { logger } from "../logging/logger.js";
+import { db } from "../db/client.js";
 
 async function main() {
   const env = getEnv();
@@ -21,39 +34,25 @@ async function main() {
   }
 
   // Create or get bootstrap account
-  const existing = await db
-    .select({ id: accounts.id })
-    .from(accounts)
-    .where(eq(accounts.name, env.BOOTSTRAP_ACCOUNT_NAME))
-    .limit(1)
-    .execute();
+  const existing = await selectAccountByName(db, env.BOOTSTRAP_ACCOUNT_NAME);
 
   let accountId: bigint;
 
-  if (existing.length > 0) {
-    accountId = existing[0].id;
+  if (existing) {
+    accountId = existing.id;
     logger.info({ accountId: accountId.toString() }, "Bootstrap account already exists");
   } else {
-    const [account] = await db
-      .insert(accounts)
-      .values({ name: env.BOOTSTRAP_ACCOUNT_NAME })
-      .returning({ id: accounts.id })
-      .execute();
+    const account = await insertAccount(db, env.BOOTSTRAP_ACCOUNT_NAME);
     accountId = account.id;
     logger.info({ accountId: accountId.toString() }, "Bootstrap account created");
   }
 
   // Create account plan
   let accountPlanId: number;
-  const existingPlan = await db
-    .select({ id: plans.id })
-    .from(plans)
-    .where(and(eq(plans.ownerAccountId, accountId), eq(plans.name, "Load Test Account Plan")))
-    .limit(1)
-    .execute();
+  const existingPlan = await selectPlanByAccountAndName(db, accountId, "Load Test Account Plan");
 
-  if (existingPlan.length > 0) {
-    accountPlanId = Number(existingPlan[0].id);
+  if (existingPlan) {
+    accountPlanId = Number(existingPlan.id);
   } else {
     const plan = await createPlan(
       { name: "Load Test Account Plan", type: "account", monthlyAllowance: 1_000_000n, maxUnitsPerRequest: 10000n },
@@ -65,15 +64,10 @@ async function main() {
 
   // Create user plan
   let userPlanId: number;
-  const existingUserPlan = await db
-    .select({ id: plans.id })
-    .from(plans)
-    .where(and(eq(plans.ownerAccountId, accountId), eq(plans.name, "Load Test User Plan")))
-    .limit(1)
-    .execute();
+  const existingUserPlan = await selectPlanByAccountAndName(db, accountId, "Load Test User Plan");
 
-  if (existingUserPlan.length > 0) {
-    userPlanId = Number(existingUserPlan[0].id);
+  if (existingUserPlan) {
+    userPlanId = Number(existingUserPlan.id);
   } else {
     const plan = await createPlan(
       { name: "Load Test User Plan", type: "user", monthlyAllowance: 100_000n, maxUnitsPerRequest: 10000n },
@@ -85,31 +79,19 @@ async function main() {
 
   // Assign account plan
   const effectiveFrom = getUtcMonthStart();
-  await db
-    .delete(planAssignments)
-    .where(and(eq(planAssignments.accountId, accountId), isNull(planAssignments.userId)))
-    .execute();
+  await deleteAssignmentsByAccount(db, BigInt(accountId));
 
   await createAssignment(Number(accountId), { planId: accountPlanId, effectiveFrom }, Number(accountId));
   logger.info("Account plan assigned");
 
   // Create test user
   let userId: bigint;
-  const existingUser = await db
-    .select({ id: users.id })
-    .from(users)
-    .where(and(eq(users.accountId, accountId), eq(users.clientUserId, "loadtest-user")))
-    .limit(1)
-    .execute();
+  const existingUser = await selectUserByAccountAndClientUserId(db, BigInt(accountId), "loadtest-user");
 
-  if (existingUser.length > 0) {
-    userId = existingUser[0].id;
+  if (existingUser) {
+    userId = existingUser.id;
   } else {
-    const [user] = await db
-      .insert(users)
-      .values({ accountId, clientUserId: "loadtest-user" })
-      .returning({ id: users.id })
-      .execute();
+    const user = await insertUser(db, BigInt(accountId), "loadtest-user");
     userId = user.id;
     logger.info({ userId: userId.toString() }, "Test user created");
   }

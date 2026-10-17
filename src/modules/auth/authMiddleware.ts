@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { verifyApiKey } from "./apiKeyService.js";
+import { verifyApiKey } from "./apiKeyAuthService.js";
 import { AuthenticationError, AuthorizationError } from "../../errors/AppError.js";
 
 export interface AuthenticatedRequest extends Request {
