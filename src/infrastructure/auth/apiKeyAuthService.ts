@@ -1,6 +1,6 @@
 import { db } from "../../db/client.js";
-import { findApiKeyByPrefix } from "./apiKeyRepository.js";
-import { verifyApiKeyHash } from "../../utils/hash.js";
+import { findApiKeyByPrefix } from "../repositories/apiKeyRepository.js";
+import { verifyApiKeyHash } from "../../domain/hash.js";
 
 export interface VerifiedApiKey {
   accountId: number;

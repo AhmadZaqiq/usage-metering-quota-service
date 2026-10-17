@@ -29,29 +29,35 @@ A professional, backend-only Usage Metering & Quota Service built with TypeScrip
 
 ```mermaid
 graph TD
-    A[HTTP Routes / Controllers] --> B[Application Services / Use Cases]
-    B --> C[Domain Rules & Interfaces]
-    C --> D[Repository Contracts]
-    D --> E[PostgreSQL / Drizzle Implementations]
+    A[Presentation: Routes + Middleware] --> B[Application: Use Case Services]
+    B --> C[Domain: Pure Business Rules]
+    C --> D[Infrastructure: Repositories + External]
+    D --> E[Database: PostgreSQL + Drizzle]
     
-    F[Cross-cutting: Config, Logging, Middleware, Validation, Errors, Health, Rate Limiting, OpenAPI] -.-> A
+    F[Cross-cutting: Config, Logging, Errors, Validation] -.-> A
     F -.-> B
-    F -.-> E
+    F -.-> D
 ```
 
 ### Module Responsibilities
 
-| Module | Responsibility |
-|--------|----------------|
-| `auth` | API key generation, verification, revocation, middleware |
-| `plans` | Plan CRUD, ownership, activation, custom plans |
-| `assignments` | Assignment lifecycle, effective dates, overlap prevention |
-| `usage` | Quota evaluation, counter persistence, transactional processing, idempotency |
-| `health` | Liveness and readiness checks |
-| `config` | Environment validation (Zod) |
-| `logging` | Structured Pino logging with request correlation |
-| `errors` | Typed error classes and HTTP error mapping |
-| `validation` | Zod schemas for all inputs |
+| Layer | Module | Responsibility |
+|-------|--------|----------------|
+| Presentation | `presentation/routes/` | HTTP request/response handling, status codes, response serialization |
+| Presentation | `presentation/middleware/` | Authentication, async error wrapping |
+| Application | `application/auth/` | API key lifecycle business rules |
+| Application | `application/plans/` | Plan CRUD, assignment lifecycle, overlap rules |
+| Application | `application/usage/` | Transactional usage processing, idempotency |
+| Application | `application/users/` | User management within an account |
+| Application | `application/health/` | Health check logic |
+| Domain | `domain/` | Pure quota evaluation, idempotency hashing, date utilities |
+| Infrastructure | `infrastructure/repositories/` | All database queries (Drizzle + raw SQL) |
+| Infrastructure | `infrastructure/auth/` | API key verification (repository + crypto) |
+| Infrastructure | `infrastructure/rateLimiter.ts` | Rate limiting (in-memory + Redis) |
+| Cross-cutting | `config/` | Environment validation |
+| Cross-cutting | `errors/` | Error types and HTTP error mapping |
+| Cross-cutting | `logging/` | Structured logging with correlation IDs |
+| Cross-cutting | `validation/` | Zod input validation schemas |
 
 ### Key Design Decisions
 
@@ -394,26 +400,78 @@ npm run loadtest -- --duration 10 --connections 10 --pipelining 1 --units 1
 ```
 src/
 ├── main.ts                     # Entry point, graceful shutdown
-├── app.ts                      # Express app factory
+├── app.ts                      # Express app factory, middleware wiring
 ├── config/
-│   └── index.ts                # Zod-validated environment
+│   └── index.ts                # Zod-validated environment configuration
 ├── db/
-│   ├── client.ts               # Drizzle client, pool, transaction helper
-│   ├── schema/                 # 7 table definitions
-│   ├── migrations/             # Drizzle-generated migrations
-│   └── sql/                    # Custom SQL (constraints, triggers)
-├── modules/
-│   ├── auth/                   # API key lifecycle, middleware
-│   ├── plans/                  # Plan + assignment services
-│   ├── rate-limiter/           # Rate limiting (in-memory + Redis)
-│   ├── usage/                  # Quota evaluator, counters, usage service
-│   └── health/                 # Health checks
-├── routes/                     # Express route handlers
-├── validation/                 # Zod schemas
-├── errors/                     # Typed error classes + handler
-├── logging/                    # Pino logger factory
-├── utils/                      # Hash, idempotency, date utilities
-└── scripts/                    # Bootstrap, example client, load test
+│   ├── client.ts               # Connection pool, Drizzle client, transactions
+│   ├── migrate.ts              # Migration runner
+│   ├── schema/                 # Drizzle table definitions (7 tables)
+│   ├── migrations/             # Drizzle-generated SQL migrations
+│   └── sql/                    # Custom SQL (constraints, triggers, extensions)
+├── domain/                     # Pure business rules (no framework/DB imports)
+│   ├── quotaEvaluator.ts       # Quota decision logic (pure function)
+│   ├── idempotency.ts          # Request hash computation
+│   ├── date.ts                 # UTC month start utilities
+│   ├── hash.ts                 # Cryptographic helpers (SHA-256, random key gen)
+│   └── pgError.ts              # PostgreSQL error code detection
+├── application/                # Use cases / business services
+│   ├── auth/
+│   │   └── apiKeyService.ts    # API key lifecycle (create, list, revoke)
+│   ├── plans/
+│   │   ├── planService.ts      # Plan CRUD, ownership, activation
+│   │   ├── assignmentService.ts # Assignment lifecycle, overlap prevention
+│   │   └── assignmentHistoryService.ts # List current + historical assignments
+│   ├── usage/
+│   │   ├── usageService.ts     # Transactional usage processing, idempotency
+│   │   └── usageHistoryService.ts # Paginated usage request history
+│   ├── users/
+│   │   └── userService.ts      # User CRUD within an account
+│   └── health/
+│       └── healthService.ts    # Liveness and readiness checks
+├── infrastructure/             # Infrastructure implementations
+│   ├── repositories/           # Data access (all Drizzle/raw SQL queries)
+│   │   ├── accountRepository.ts
+│   │   ├── apiKeyRepository.ts
+│   │   ├── assignmentRepository.ts
+│   │   ├── counterRepository.ts
+│   │   ├── planRepository.ts
+│   │   ├── usageRequestRepository.ts
+│   │   └── userRepository.ts
+│   ├── auth/
+│   │   └── apiKeyAuthService.ts # API key verification (repository + hash)
+│   └── rateLimiter.ts          # In-memory + Redis rate limiting
+├── presentation/               # HTTP layer (Express)
+│   ├── middleware/
+│   │   ├── authMiddleware.ts   # Bearer token authentication
+│   │   └── asyncHandler.ts     # Async route error wrapping
+│   └── routes/
+│       ├── apiKeyRoutes.ts     # POST/GET/DELETE /api-keys
+│       ├── assignmentRoutes.ts # POST/GET /assignments, GET /assignments/current
+│       ├── healthRoutes.ts     # GET /health/live, GET /health/ready
+│       ├── planRoutes.ts       # CRUD /plans
+│       ├── usageRoutes.ts      # POST /usage, GET /usage (history)
+│       └── userRoutes.ts       # POST/GET /users
+├── errors/
+│   ├── AppError.ts             # Typed error classes
+│   └── errorHandler.ts         # Express error middleware, HTTP status mapping
+├── logging/
+│   └── logger.ts               # Pino structured logger with request correlation
+├── validation/
+│   └── schemas.ts              # Zod input validation schemas
+├── scripts/
+│   ├── bootstrap.ts            # Create initial account, plan, assignment, API key
+│   ├── bootstrap-loadtest.ts   # Create load-test account, plans, user, API key
+│   ├── client.ts               # Example CLI client for /usage endpoint
+│   └── loadtest.ts             # Autocannon load test script
+└── test/
+    ├── setup.ts                # Test database lifecycle (migrate, truncate)
+    ├── utils.ts                # Test helper functions
+    ├── bootstrap.test.ts       # Bootstrap integration tests
+    ├── boundary.test.ts        # Quota, bigint, idempotency, plan boundary tests
+    ├── concurrency.test.ts     # Concurrent quota consumption, idempotency tests
+    ├── quotaEvaluator.test.ts  # Pure function unit tests (no DB)
+    └── rollback.test.ts        # Transaction rollback, rate limiter tests
 ```
 
 ---

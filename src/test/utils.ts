@@ -1,11 +1,11 @@
 import { getTestDb } from "./setup.js";
 import { accounts, users, plans, planAssignments, apiKeys, usageCounters, usageRequests } from "../db/schema/index.js";
 import { eq, and, isNull } from "drizzle-orm";
-import { createApiKey } from "../modules/auth/apiKeyService.js";
-import { createPlan } from "../modules/plans/planService.js";
-import { createAssignment } from "../modules/plans/assignmentService.js";
-import { processUsageRequest } from "../modules/usage/usageService.js";
-import { formatDateForDb, getUtcMonthStart } from "../utils/date.js";
+import { createApiKey } from "../application/auth/apiKeyService.js";
+import { createPlan } from "../application/plans/planService.js";
+import { createAssignment } from "../application/plans/assignmentService.js";
+import { processUsageRequest } from "../application/usage/usageService.js";
+import { formatDateForDb, getUtcMonthStart } from "../domain/date.js";
 
 export interface TestAccount {
   id: number;

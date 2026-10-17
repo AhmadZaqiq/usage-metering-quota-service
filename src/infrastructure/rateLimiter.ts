@@ -1,7 +1,7 @@
 import { Redis as RedisClient } from "ioredis";
 import { Request, Response, NextFunction } from "express";
-import { getEnv } from "../../config/index.js";
-import { logger } from "../../logging/logger.js";
+import { getEnv } from "../config/index.js";
+import { logger } from "../logging/logger.js";
 
 interface RateLimitInfo {
   total: number;

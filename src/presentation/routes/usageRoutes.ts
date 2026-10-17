@@ -1,10 +1,10 @@
 import { Router, Response, Request } from "express";
-import { processUsageRequest } from "../modules/usage/usageService.js";
-import { getUsageHistory } from "../modules/usage/usageHistoryService.js";
-import { asyncHandler } from "../utils/index.js";
-import { usageRequestSchema, usageHistorySchema } from "../validation/schemas.js";
-import { AuthenticatedRequest } from "../modules/auth/authMiddleware.js";
-import { ValidationError } from "../errors/AppError.js";
+import { processUsageRequest } from "../../application/usage/usageService.js";
+import { getUsageHistory } from "../../application/usage/usageHistoryService.js";
+import { asyncHandler } from "../middleware/asyncHandler.js";
+import { usageRequestSchema, usageHistorySchema } from "../../validation/schemas.js";
+import { AuthenticatedRequest } from "../middleware/authMiddleware.js";
+import { ValidationError } from "../../errors/AppError.js";
 
 const router = Router();
 

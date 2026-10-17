@@ -5,7 +5,7 @@ import {
   selectPlanById,
   updatePlan as updatePlanRow,
   softDeletePlan,
-} from "./planRepository.js";
+} from "../../infrastructure/repositories/planRepository.js";
 import { NotFoundError, AuthorizationError, ValidationError } from "../../errors/AppError.js";
 import { MAX_UNITS_PER_REQUEST_BIGINT } from "../../config/index.js";
 

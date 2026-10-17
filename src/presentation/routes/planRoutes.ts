@@ -1,9 +1,9 @@
 import { Router, Response, Request } from "express";
-import { createPlan, listPlans, getPlan, updatePlan, deletePlan } from "../modules/plans/planService.js";
-import { asyncHandler } from "../utils/index.js";
-import { createPlanSchema, updatePlanSchema, idParamSchema } from "../validation/schemas.js";
-import { AuthenticatedRequest } from "../modules/auth/authMiddleware.js";
-import { ValidationError } from "../errors/AppError.js";
+import { createPlan, listPlans, getPlan, updatePlan, deletePlan } from "../../application/plans/planService.js";
+import { asyncHandler } from "../middleware/asyncHandler.js";
+import { createPlanSchema, updatePlanSchema, idParamSchema } from "../../validation/schemas.js";
+import { AuthenticatedRequest } from "../middleware/authMiddleware.js";
+import { ValidationError } from "../../errors/AppError.js";
 
 const router = Router();
 

@@ -1,5 +1,5 @@
 import { withTransaction } from "../../db/client.js";
-import { getUsageHistory as getUsageHistoryFromRepository, type UsageHistoryResult } from "./usageRequestRepository.js";
+import { getUsageHistory as getUsageHistoryFromRepository, type UsageHistoryResult } from "../../infrastructure/repositories/usageRequestRepository.js";
 
 export async function getUsageHistory(
   accountId: bigint,

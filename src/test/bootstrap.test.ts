@@ -3,7 +3,7 @@ import { bootstrap } from "../scripts/bootstrap.js";
 import { getTestDb } from "./setup.js";
 import { accounts, apiKeys, plans, planAssignments, usageCounters } from "../db/schema/index.js";
 import { and, eq, isNull } from "drizzle-orm";
-import { processUsageRequest } from "../modules/usage/usageService.js";
+import { processUsageRequest } from "../application/usage/usageService.js";
 
 const ORIGINAL_BOOTSTRAP_ACCOUNT_NAME = process.env.BOOTSTRAP_ACCOUNT_NAME;
 const ORIGINAL_BOOTSTRAP_API_KEY_NAME = process.env.BOOTSTRAP_API_KEY_NAME;

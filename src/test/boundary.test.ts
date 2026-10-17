@@ -2,15 +2,15 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { getTestDb } from "./setup.js";
 import { accounts, users, plans, planAssignments, apiKeys, usageCounters, usageRequests } from "../db/schema/index.js";
 import { eq, and, isNull } from "drizzle-orm";
-import { createApiKey, revokeApiKey } from "../modules/auth/apiKeyService.js";
-import { createPlan, listPlans, getPlan, updatePlan, deletePlan } from "../modules/plans/planService.js";
-import { createAssignment } from "../modules/plans/assignmentService.js";
-import { processUsageRequest } from "../modules/usage/usageService.js";
-import { getUsageHistory } from "../modules/usage/usageHistoryService.js";
-import { evaluateQuota } from "../modules/usage/quotaEvaluator.js";
-import { formatDateForDb, getUtcMonthStart } from "../utils/date.js";
+import { createApiKey, revokeApiKey } from "../application/auth/apiKeyService.js";
+import { createPlan, listPlans, getPlan, updatePlan, deletePlan } from "../application/plans/planService.js";
+import { createAssignment } from "../application/plans/assignmentService.js";
+import { processUsageRequest } from "../application/usage/usageService.js";
+import { getUsageHistory } from "../application/usage/usageHistoryService.js";
+import { evaluateQuota } from "../domain/quotaEvaluator.js";
+import { formatDateForDb, getUtcMonthStart } from "../domain/date.js";
 import { MAX_UNITS_PER_REQUEST_BIGINT } from "../config/index.js";
-import { upsertAndLockCounter } from "../modules/usage/counterRepository.js";
+import { upsertAndLockCounter } from "../infrastructure/repositories/counterRepository.js";
 
 async function createTestAccount(name: string) {
   const db = getTestDb();
@@ -352,7 +352,7 @@ describe("Boundary Integration Tests", () => {
 
       // We can't easily test the actual month boundary without mocking time,
       // but we can verify the utility function works correctly
-      const { getUtcMonthStart } = await import("../utils/date.js");
+      const { getUtcMonthStart } = await import("../domain/date.js");
       
       const october = getUtcMonthStart(date1);
       const november = getUtcMonthStart(date2);

@@ -3,8 +3,8 @@ import {
   insertApiKey,
   selectApiKeysByAccount,
   updateApiKeyRevoked,
-} from "./apiKeyRepository.js";
-import { generateApiKey } from "../../utils/hash.js";
+} from "../../infrastructure/repositories/apiKeyRepository.js";
+import { generateApiKey } from "../../domain/hash.js";
 import { NotFoundError } from "../../errors/AppError.js";
 
 export interface ApiKeyInfo {

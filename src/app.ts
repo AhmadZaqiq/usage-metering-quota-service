@@ -1,16 +1,16 @@
 import express, { Request, Response, NextFunction } from "express";
-import { authMiddleware } from "./modules/auth/authMiddleware.js";
+import { authMiddleware } from "./presentation/middleware/authMiddleware.js";
 import { errorHandler } from "./errors/errorHandler.js";
 import { logger, createRequestLogger } from "./logging/logger.js";
-import { createRateLimiterMiddleware, closeRateLimiterStore } from "./modules/rate-limiter/rateLimiter.js";
+import { createRateLimiterMiddleware, closeRateLimiterStore } from "./infrastructure/rateLimiter.js";
 import { getEnv } from "./config/index.js";
-import { asyncHandler } from "./utils/index.js";
-import usageRoutes from "./routes/usageRoutes.js";
-import apiKeyRoutes from "./routes/apiKeyRoutes.js";
-import planRoutes from "./routes/planRoutes.js";
-import assignmentRoutes from "./routes/assignmentRoutes.js";
-import userRoutes from "./routes/userRoutes.js";
-import healthRoutes from "./routes/healthRoutes.js";
+import { asyncHandler } from "./presentation/middleware/asyncHandler.js";
+import usageRoutes from "./presentation/routes/usageRoutes.js";
+import apiKeyRoutes from "./presentation/routes/apiKeyRoutes.js";
+import planRoutes from "./presentation/routes/planRoutes.js";
+import assignmentRoutes from "./presentation/routes/assignmentRoutes.js";
+import userRoutes from "./presentation/routes/userRoutes.js";
+import healthRoutes from "./presentation/routes/healthRoutes.js";
 
 declare module "express" {
   interface Request {

@@ -3,7 +3,7 @@ import {
   selectUserByAccountAndClientUserId,
   insertUser,
   selectUsersByAccount,
-} from "./userRepository.js";
+} from "../../infrastructure/repositories/userRepository.js";
 import { ValidationError } from "../../errors/AppError.js";
 
 export interface UserInfo {

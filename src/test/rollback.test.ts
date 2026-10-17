@@ -2,15 +2,15 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { getTestDb } from "./setup.js";
 import { accounts, users, plans, planAssignments, apiKeys, usageCounters, usageRequests } from "../db/schema/index.js";
 import { eq, and, isNull, sql } from "drizzle-orm";
-import { createApiKey } from "../modules/auth/apiKeyService.js";
-import { createPlan } from "../modules/plans/planService.js";
-import { createAssignment } from "../modules/plans/assignmentService.js";
-import { processUsageRequest } from "../modules/usage/usageService.js";
-import { formatDateForDb, getUtcMonthStart } from "../utils/date.js";
+import { createApiKey } from "../application/auth/apiKeyService.js";
+import { createPlan } from "../application/plans/planService.js";
+import { createAssignment } from "../application/plans/assignmentService.js";
+import { processUsageRequest } from "../application/usage/usageService.js";
+import { formatDateForDb, getUtcMonthStart } from "../domain/date.js";
 import { BusinessError } from "../errors/AppError.js";
-import { upsertAndLockCounter } from "../modules/usage/counterRepository.js";
+import { upsertAndLockCounter } from "../infrastructure/repositories/counterRepository.js";
 import { db } from "../db/client.js";
-import { getRateLimiterStore, closeRateLimiterStore } from "../modules/rate-limiter/rateLimiter.js";
+import { getRateLimiterStore, closeRateLimiterStore } from "../infrastructure/rateLimiter.js";
 
 async function createTestAccount(name: string) {
   const db = getTestDb();
@@ -345,7 +345,7 @@ describe("Transaction Rollback Integration Tests", () => {
         close: async () => {},
       };
 
-      const { createRateLimiterMiddleware } = await import("../modules/rate-limiter/rateLimiter.js");
+      const { createRateLimiterMiddleware } = await import("../infrastructure/rateLimiter.js");
 
       // Temporarily override the store by mocking getRateLimiterStore
       // We test the middleware's catch behavior by calling it directly

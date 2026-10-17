@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { evaluateQuota } from "../modules/usage/quotaEvaluator.js";
+import { evaluateQuota } from "../domain/quotaEvaluator.js";
 import { MAX_UNITS_PER_REQUEST_BIGINT } from "../config/index.js";
 
 describe("Quota Evaluator (Pure Function Unit Tests)", () => {

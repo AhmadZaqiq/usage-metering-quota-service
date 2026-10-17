@@ -1,7 +1,7 @@
 import { db } from "../../db/client.js";
-import { listAssignmentsWithPlan, getCurrentAssignmentsWithPlan } from "./assignmentRepository.js";
+import { listAssignmentsWithPlan, getCurrentAssignmentsWithPlan } from "../../infrastructure/repositories/assignmentRepository.js";
 import type { AssignmentInfo } from "./assignmentService.js";
-import { formatDateForDb } from "../../utils/date.js";
+import { formatDateForDb } from "../../domain/date.js";
 
 export async function listAssignments(accountId: number): Promise<AssignmentInfo[]> {
   const results = await listAssignmentsWithPlan(db, BigInt(accountId));

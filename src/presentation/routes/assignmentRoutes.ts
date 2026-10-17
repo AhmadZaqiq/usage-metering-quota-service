@@ -1,10 +1,10 @@
 import { Router, Response, Request } from "express";
-import { createAssignment } from "../modules/plans/assignmentService.js";
-import { listAssignments, getCurrentAssignments } from "../modules/plans/assignmentHistoryService.js";
-import { asyncHandler } from "../utils/index.js";
-import { createAssignmentSchema } from "../validation/schemas.js";
-import { AuthenticatedRequest } from "../modules/auth/authMiddleware.js";
-import { ValidationError } from "../errors/AppError.js";
+import { createAssignment } from "../../application/plans/assignmentService.js";
+import { listAssignments, getCurrentAssignments } from "../../application/plans/assignmentHistoryService.js";
+import { asyncHandler } from "../middleware/asyncHandler.js";
+import { createAssignmentSchema } from "../../validation/schemas.js";
+import { AuthenticatedRequest } from "../middleware/authMiddleware.js";
+import { ValidationError } from "../../errors/AppError.js";
 
 const router = Router();
 

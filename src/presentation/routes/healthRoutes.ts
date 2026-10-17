@@ -1,6 +1,6 @@
-import { asyncHandler } from "../utils/index.js";
+import { asyncHandler } from "../middleware/asyncHandler.js";
 import { Router, Response } from "express";
-import { getLiveness, getReadiness } from "../modules/health/healthService.js";
+import { getLiveness, getReadiness } from "../../application/health/healthService.js";
 
 const router = Router();
 

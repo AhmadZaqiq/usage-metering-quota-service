@@ -8,9 +8,9 @@ import {
   selectOverlappingAssignmentsByUserForUpdate,
   updateAssignmentEffectiveTo,
   insertAssignment,
-} from "./assignmentRepository.js";
+} from "../../infrastructure/repositories/assignmentRepository.js";
 import { NotFoundError, AuthorizationError, ValidationError, ConflictError } from "../../errors/AppError.js";
-import { getNextUtcMonthStart, formatDateForDb } from "../../utils/date.js";
+import { getNextUtcMonthStart, formatDateForDb } from "../../domain/date.js";
 
 export interface AssignmentInfo {
   id: number;

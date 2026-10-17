@@ -1,9 +1,9 @@
 import { Router, Response, Request } from "express";
-import { createUser, listUsers } from "../modules/users/userService.js";
-import { asyncHandler } from "../utils/index.js";
-import { createUserSchema } from "../validation/schemas.js";
-import { ValidationError } from "../errors/AppError.js";
-import { AuthenticatedRequest } from "../modules/auth/authMiddleware.js";
+import { createUser, listUsers } from "../../application/users/userService.js";
+import { asyncHandler } from "../middleware/asyncHandler.js";
+import { createUserSchema } from "../../validation/schemas.js";
+import { ValidationError } from "../../errors/AppError.js";
+import { AuthenticatedRequest } from "../middleware/authMiddleware.js";
 
 const router = Router();
 

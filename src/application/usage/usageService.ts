@@ -1,14 +1,14 @@
 import { withTransaction } from "../../db/client.js";
 import { MAX_UNITS_PER_REQUEST_BIGINT } from "../../config/index.js";
-import { evaluateQuota, type RejectionReason } from "./quotaEvaluator.js";
-import { upsertAndLockCounter, incrementCounter, type CounterRow } from "./counterRepository.js";
-import { computeRequestHash, type RequestFingerprint } from "../../utils/idempotency.js";
-import { formatDateForDb, getUtcMonthStart } from "../../utils/date.js";
+import { evaluateQuota, type RejectionReason } from "../../domain/quotaEvaluator.js";
+import { upsertAndLockCounter, incrementCounter, type CounterRow } from "../../infrastructure/repositories/counterRepository.js";
+import { computeRequestHash, type RequestFingerprint } from "../../domain/idempotency.js";
+import { formatDateForDb, getUtcMonthStart } from "../../domain/date.js";
 import { NotFoundError, BusinessError, ConflictError, ValidationError } from "../../errors/AppError.js";
-import { findUsageRequestByKey, insertUsageRequest, type UsageRequestRow } from "./usageRequestRepository.js";
-import { selectUserByAccountAndClientUserId } from "../users/userRepository.js";
-import { selectCurrentAssignmentByAccount, selectCurrentAssignmentByUser, selectPlanByCriteria } from "../plans/assignmentRepository.js";
-import { updateApiKeyLastUsedAt } from "../auth/apiKeyRepository.js";
+import { findUsageRequestByKey, insertUsageRequest, type UsageRequestRow } from "../../infrastructure/repositories/usageRequestRepository.js";
+import { selectUserByAccountAndClientUserId } from "../../infrastructure/repositories/userRepository.js";
+import { selectCurrentAssignmentByAccount, selectCurrentAssignmentByUser, selectPlanByCriteria } from "../../infrastructure/repositories/assignmentRepository.js";
+import { updateApiKeyLastUsedAt } from "../../infrastructure/repositories/apiKeyRepository.js";
 
 export interface UsageInput {
   userId?: string;

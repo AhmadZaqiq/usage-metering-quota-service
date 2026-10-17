@@ -1,9 +1,9 @@
 import { Router, Response, Request } from "express";
-import { createApiKey, listApiKeys, revokeApiKey } from "../modules/auth/apiKeyService.js";
-import { asyncHandler } from "../utils/index.js";
-import { createApiKeySchema, idParamSchema } from "../validation/schemas.js";
-import { AuthenticatedRequest } from "../modules/auth/authMiddleware.js";
-import { ValidationError } from "../errors/AppError.js";
+import { createApiKey, listApiKeys, revokeApiKey } from "../../application/auth/apiKeyService.js";
+import { asyncHandler } from "../middleware/asyncHandler.js";
+import { createApiKeySchema, idParamSchema } from "../../validation/schemas.js";
+import { AuthenticatedRequest } from "../middleware/authMiddleware.js";
+import { ValidationError } from "../../errors/AppError.js";
 
 const router = Router();
 

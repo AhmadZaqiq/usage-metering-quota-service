@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { ZodError } from "zod";
-import { pgErrorCode } from "../utils/pgError.js";
+import { pgErrorCode } from "../domain/pgError.js";
 import { AppError } from "./AppError.js";
 import { logger } from "../logging/logger.js";
 
