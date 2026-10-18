@@ -198,11 +198,51 @@ async function healthGate(api: ApiClient, report: ScenarioReport): Promise<void>
   );
 }
 
+async function ensureUserPlan(
+  api: ApiClient,
+  report: ScenarioReport,
+  plans: {
+    id: number;
+    name: string;
+    type: string;
+    ownerAccountId: number | null;
+    monthlyAllowance: string;
+    maxUnitsPerRequest: string;
+  }[],
+  name: string,
+  monthlyAllowance: string,
+  maxUnitsPerRequest: string
+): Promise<{ planId: number }> {
+  const existing = plans.find((p) => p.type === 'user' && p.name === name);
+  if (!existing) {
+    const created = await api.request('POST', '/plans', {
+      name,
+      type: 'user',
+      monthlyAllowance,
+      maxUnitsPerRequest,
+    });
+    report.expect(`created ${name}`, created.status === 201, `got ${created.status}`);
+    return { planId: (created.data as unknown as { id: number }).id };
+  }
+
+  const patched = await api.request('PATCH', `/plans/${existing.id}`, {
+    monthlyAllowance,
+    maxUnitsPerRequest,
+  });
+  report.expect(`normalized ${name} allowances`, patched.status === 200, `got ${patched.status}`);
+  return { planId: existing.id };
+}
+
 async function ensureDemoPlansAndUsers(
   api: ApiClient,
   report: ScenarioReport,
   runId: string
-): Promise<{ userIds: string[]; accountPlanId: number; userPlanId: number }> {
+): Promise<{
+  userIds: string[];
+  accountPlanId: number;
+  userPlanId: number;
+  plusPlanId: number;
+}> {
   const userIds: string[] = [];
   for (let i = 1; i <= 3; i++) {
     const clientUserId = `demo-${runId}-${i}`;
@@ -222,41 +262,40 @@ async function ensureDemoPlansAndUsers(
     maxUnitsPerRequest: string;
   }[];
 
-  let userPlanId: number;
-  const existingUserPlan = plans.find((p) => p.type === 'user' && p.name === 'Demo User Plan');
-  if (!existingUserPlan) {
-    const created = await api.request('POST', '/plans', {
-      name: 'Demo User Plan',
-      type: 'user',
-      monthlyAllowance: '100',
-      maxUnitsPerRequest: '10',
-    });
-    report.expect('created Demo User Plan', created.status === 201, `got ${created.status}`);
-    userPlanId = (created.data as unknown as { id: number }).id;
-  } else {
-    const patched = await api.request('PATCH', `/plans/${existingUserPlan.id}`, {
-      monthlyAllowance: '100',
-      maxUnitsPerRequest: '10',
-    });
-    report.expect(
-      'normalized Demo User Plan allowances',
-      patched.status === 200,
-      `got ${patched.status}`
-    );
-    userPlanId = existingUserPlan.id;
-  }
+  const userPlans = await ensureUserPlan(api, report, plans, 'Demo User Plan', '100', '10');
+  // Plus plan: same setup but a higher allowance and a higher per-request cap,
+  // so demo-3 accepts units demo-1/demo-2 would reject (per-plan decision).
+  const plusPlans = await ensureUserPlan(api, report, plans, 'Demo User Plan Plus', '200', '20');
 
-  for (const clientUserId of userIds) {
-    const assigned = await api.request('POST', '/assignments', {
-      userId: clientUserId,
-      planId: userPlanId,
-    });
-    report.expect(
-      `assigned user plan to ${clientUserId}`,
-      assigned.status === 201,
-      `got ${assigned.status}`
-    );
-  }
+  // demo-1 and demo-2 share the small user plan; demo-3 gets the Plus plan so
+  // the same units yield different remainings and different accept/reject.
+  const smallAssign = await api.request('POST', '/assignments', {
+    userId: userIds[0],
+    planId: userPlans.planId,
+  });
+  report.expect(
+    `assigned Demo User Plan to ${userIds[0]}`,
+    smallAssign.status === 201,
+    `got ${smallAssign.status}`
+  );
+  const smallAssign2 = await api.request('POST', '/assignments', {
+    userId: userIds[1],
+    planId: userPlans.planId,
+  });
+  report.expect(
+    `assigned Demo User Plan to ${userIds[1]}`,
+    smallAssign2.status === 201,
+    `got ${smallAssign2.status}`
+  );
+  const plusAssign = await api.request('POST', '/assignments', {
+    userId: userIds[2],
+    planId: plusPlans.planId,
+  });
+  report.expect(
+    `assigned Demo User Plan Plus to ${userIds[2]}`,
+    plusAssign.status === 201,
+    `got ${plusAssign.status}`
+  );
 
   const currentRes = await api.request('GET', '/assignments/current');
   report.expect('read current assignments', currentRes.status === 200, `got ${currentRes.status}`);
@@ -303,7 +342,7 @@ async function ensureDemoPlansAndUsers(
     `got ${normalized.status}`
   );
 
-  return { userIds, accountPlanId: accountPlan.id, userPlanId };
+  return { userIds, accountPlanId: accountPlan.id, userPlanId: userPlans.planId, plusPlanId: plusPlans.planId };
 }
 
 async function probeUsed(api: ApiClient, report: ScenarioReport, runId: string): Promise<bigint> {
@@ -369,7 +408,25 @@ async function runDemo(opts: Options, key: string): Promise<number> {
       `got ${String(s1.data.userRemaining)}`
     );
 
-    // S2: reduce user allowance below usage -> zero remaining -> rejection.
+    // S1b: demo-3 is on the Plus plan (allowance 200), so the same 5 units
+    // leave a larger userRemaining than demo-1's plan did (95) - proves the
+    // userRemaining is plan-scoped, not a constant.
+    const s1b = await api.request('POST', '/usage', usageBody(setup.userIds[2], '5', `demo-s1b-${runId}`));
+    report.expect('S1b accepted usage returns 200', s1b.status === 200, `got ${s1b.status}`);
+    report.expect('S1b decision accepted', s1b.data.decision === 'accepted');
+    report.expect(
+      'S1b userRemaining = 200 - 5 (Plus plan)',
+      s1b.data.userRemaining === '195',
+      `got ${String(s1b.data.userRemaining)}`
+    );
+    report.expect(
+      'S1b accountRemaining = 35 - 5',
+      s1b.data.accountRemaining === '30',
+      `got ${String(s1b.data.accountRemaining)}`
+    );
+
+    // S2: reduce the small user plan below usage -> zero remaining -> rejection.
+    // The Plus plan is untouched, so demo-3's decision must diverge from demo-2's.
     const lowerUser = await api.request('PATCH', `/plans/${setup.userPlanId}`, {
       monthlyAllowance: '5',
     });
@@ -395,8 +452,8 @@ async function runDemo(opts: Options, key: string): Promise<number> {
       `got ${String(s2a.data.userRemaining)}`
     );
     report.expect(
-      'S2a accountRemaining = 30',
-      s2a.data.accountRemaining === '30',
+      'S2a accountRemaining = 25',
+      s2a.data.accountRemaining === '25',
       `got ${String(s2a.data.accountRemaining)}`
     );
 
@@ -421,24 +478,50 @@ async function runDemo(opts: Options, key: string): Promise<number> {
     );
     report.expect(
       'S2b consumed no account quota',
-      s2b.data.accountRemaining === '30',
+      s2b.data.accountRemaining === '25',
       `got ${String(s2b.data.accountRemaining)}`
     );
 
-    // S3: per-request limit rejection.
+    // S2c: same 5 units that just rejected demo-2 (small plan, 0 left) are
+    // still accepted for demo-3 (Plus plan, 190 left) - a plan-dependent decision.
+    const s2c = await api.request('POST', '/usage', usageBody(setup.userIds[2], '5', `demo-s2c-${runId}`));
+    report.expect(
+      'S2c Plus-plan user accepts the same units the small plan rejected',
+      s2c.status === 200 && s2c.data.decision === 'accepted',
+      `status=${s2c.status} decision=${String(s2c.data.decision)}`
+    );
+    report.expect(
+      'S2c userRemaining = 195 - 5 (Plus plan)',
+      s2c.data.userRemaining === '190',
+      `got ${String(s2c.data.userRemaining)}`
+    );
+    report.expect(
+      'S2c accountRemaining = 25 - 5',
+      s2c.data.accountRemaining === '20',
+      `got ${String(s2c.data.accountRemaining)}`
+    );
+
+    // S3: per-request limit rejection. demo-1 is on the small plan (cap 10
+    // units/request) and has plenty of remaining allowance, so 11 units is
+    // rejected on the per-request cap alone.
     const s3 = await api.request(
       'POST',
       '/usage',
-      usageBody(setup.userIds[2], '11', `demo-s3-${runId}`)
+      usageBody(setup.userIds[0], '11', `demo-s3-${runId}`)
     );
     report.expect(
       'S3 over-max units rejected with max_per_request_exceeded',
       s3.status === 200 && s3.data.rejectionReason === 'max_per_request_exceeded',
       `status=${s3.status} reason=${String(s3.data.rejectionReason)}`
     );
+    report.expect(
+      'S3 limitScope = user (user-plan cap is the binding limit)',
+      s3.data.limitScope === 'user',
+      `got ${String(s3.data.limitScope)}`
+    );
 
     // S4: reduce account allowance below usage -> zero remaining -> rejection.
-    const usedAfterS2 = used + 10n; // S1: 5, S2a: 5
+    const usedAfterS2 = used + 20n; // S1: 5, S1b: 5, S2a: 5, S2c: 5 (S2b/S3 rejected, no debit)
     const lowerAccount = await api.request('PATCH', `/plans/${setup.accountPlanId}`, {
       monthlyAllowance: (usedAfterS2 - 1n).toString(),
     });
@@ -581,6 +664,15 @@ async function runDemo(opts: Options, key: string): Promise<number> {
     const demoItems = items.filter((i) => i.idempotencyKey.startsWith(demoPrefix));
     const acceptedCount = demoItems.filter((i) => i.decision === 'accepted').length;
     const rejectedCount = demoItems.filter((i) => i.decision === 'rejected').length;
+    // A rejected request must be recorded in history with its decision, not
+    // silently dropped - auditability of rejections is part of the contract.
+    const s2bKey = `demo-s2b-${runId}`;
+    const s2bRow = demoItems.find((i) => i.idempotencyKey === s2bKey);
+    report.expect(
+      'S8 rejected request is preserved in history with decision=rejected',
+      s2bRow !== undefined && s2bRow.decision === 'rejected',
+      s2bRow ? `got decision=${s2bRow.decision}` : `no row with key ${s2bKey}`
+    );
     console.log(
       `  History (page 1): total=${String(history.data.total)} demo rows=${demoItems.length}` +
         ` (accepted=${acceptedCount}, rejected=${rejectedCount})`
@@ -591,6 +683,7 @@ async function runDemo(opts: Options, key: string): Promise<number> {
       monthlyAllowance: (used + 10_000n).toString(),
     });
     await api.request('PATCH', `/plans/${setup.userPlanId}`, { monthlyAllowance: '100' });
+    await api.request('PATCH', `/plans/${setup.plusPlanId}`, { monthlyAllowance: '200' });
   } catch (err) {
     if (!(err instanceof DemoError)) throw err;
     report.check('demo aborted', false, err.message);
