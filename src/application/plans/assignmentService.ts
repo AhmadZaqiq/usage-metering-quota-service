@@ -1,4 +1,4 @@
-import { withTransaction, type Transaction } from "../../db/client.js";
+import { withTransaction, type Transaction } from '../../db/client.js';
 import {
   selectUserByAccountAndClientUserId,
   selectPlanByCriteriaForUpdate,
@@ -10,10 +10,14 @@ import {
   selectOverlappingAssignmentsByUserForUpdate,
   updateAssignmentEffectiveTo,
   insertAssignment,
-} from "../../infrastructure/repositories/assignmentRepository.js";
-import type { PlanAssignmentRow } from "../../infrastructure/repositories/assignmentRepository.js";
-import { NotFoundError, AuthorizationError, ValidationError, ConflictError } from "../../errors/AppError.js";
-import { getNextUtcMonthStart } from "../../domain/date.js";
+} from '../../infrastructure/repositories/assignmentRepository.js';
+import type { PlanAssignmentRow } from '../../infrastructure/repositories/assignmentRepository.js';
+import {
+  NotFoundError,
+  AuthorizationError,
+  ValidationError,
+  ConflictError,
+} from '../../errors/AppError.js';
 
 export interface AssignmentInfo {
   id: number;
@@ -21,7 +25,7 @@ export interface AssignmentInfo {
   userId: number | null;
   planId: number;
   planName: string;
-  planType: "account" | "user";
+  planType: 'account' | 'user';
   effectiveFrom: string;
   effectiveTo: string | null;
   createdAt: Date;
@@ -44,10 +48,10 @@ export async function createAssignment(
       return await createAssignmentImpl(tx, accountId, input, requestingAccountId);
     } catch (err) {
       const pgCode = (err as { code?: string }).code;
-      if (pgCode === "23P01" || pgCode === "23505") {
+      if (pgCode === '23P01' || pgCode === '23505') {
         // no_overlapping_assignments exclusion constraint or
         // uq_current_account_assignment unique index violated
-        throw new ConflictError("Overlapping assignment exists");
+        throw new ConflictError('Overlapping assignment exists');
       }
       throw err;
     }
@@ -61,7 +65,7 @@ async function createAssignmentImpl(
   requestingAccountId: number
 ): Promise<AssignmentInfo> {
   if (accountId !== requestingAccountId) {
-    throw new AuthorizationError("Cannot create assignment for another account");
+    throw new AuthorizationError('Cannot create assignment for another account');
   }
 
   let userId: bigint | null = null;
@@ -71,7 +75,7 @@ async function createAssignmentImpl(
     const user = await selectUserByAccountAndClientUserId(tx, BigInt(accountId), input.userId!);
 
     if (!user) {
-      throw new NotFoundError("User not found in this account");
+      throw new NotFoundError('User not found in this account');
     }
     userId = user.id;
   }
@@ -82,18 +86,18 @@ async function createAssignmentImpl(
   const plan = await selectPlanByCriteriaForUpdate(tx, BigInt(input.planId));
 
   if (!plan) {
-    throw new NotFoundError("Plan not found or inactive");
+    throw new NotFoundError('Plan not found or inactive');
   }
 
   if (plan.ownerAccountId && Number(plan.ownerAccountId) !== accountId) {
-    throw new AuthorizationError("Cannot assign custom plan from another account");
+    throw new AuthorizationError('Cannot assign custom plan from another account');
   }
 
-  if (isAccountLevel && plan.type !== "account") {
-    throw new ValidationError("Account-level assignment requires an account plan");
+  if (isAccountLevel && plan.type !== 'account') {
+    throw new ValidationError('Account-level assignment requires an account plan');
   }
-  if (!isAccountLevel && plan.type !== "user") {
-    throw new ValidationError("User-level assignment requires a user plan");
+  if (!isAccountLevel && plan.type !== 'user') {
+    throw new ValidationError('User-level assignment requires a user plan');
   }
 
   const now = new Date();
@@ -116,35 +120,12 @@ async function createAssignmentImpl(
   // for seconds under contention; stamping effectiveFrom with a pre-wait
   // timestamp would backdate an "immediate" change into the past.
   const nowAfterLocks = new Date();
-  const nextMonthStartAfterLocks = new Date(getNextUtcMonthStart(nowAfterLocks));
 
-  // Classify against the currently effective plan. Fail closed if the current
-  // assignment points at a plan that is no longer resolvable (deleted/inactive):
-  // applying an unclassified change could silently skip the downgrade path.
-  let isDowngrade = false;
-
-  if (current) {
-    // CON-04: lock the currently effective plan row while classifying against
-    // its allowance, so a concurrent allowance update cannot flip the
-    // upgrade/downgrade decision mid-flight. Deadlocks (opposite lock order
-    // across different subjects) surface as 40P01 and are retried by
-    // withTransaction; a plan deleted while waiting yields null and fails closed.
-    const currentPlan = await selectPlanByCriteriaForUpdate(tx, current.planId);
-
-    if (!currentPlan) {
-      throw new ConflictError("Current assigned plan is no longer available");
-    }
-
-    if (plan.monthlyAllowance < currentPlan.monthlyAllowance) {
-      isDowngrade = true;
-    }
-  }
-
-  // Client effectiveFrom only applies to the first assignment (no current row).
-  // When a current assignment exists, upgrades/same-tier changes take effect
-  // immediately (now) and downgrades at the next UTC month start.
+  // Immediate plan-change semantics: when a current assignment exists, the
+  // new assignment starts now (stamped after locks). The client-supplied
+  // effectiveFrom is honored only for a subject's first assignment.
   const assignmentEffectiveFrom = current
-    ? (isDowngrade ? nextMonthStartAfterLocks : nowAfterLocks)
+    ? nowAfterLocks
     : new Date(input.effectiveFrom ?? nowAfterLocks);
 
   // Supersede any pending (future) assignments before inserting the new row.
@@ -156,14 +137,9 @@ async function createAssignmentImpl(
   }
 
   if (current) {
-    // End the current assignment:
-    // - Downgrade: it stays effective until the next UTC month start.
-    // - Upgrade / same tier: it ends when the new assignment starts (now).
-    await updateAssignmentEffectiveTo(
-      tx,
-      current.id,
-      isDowngrade ? nextMonthStartAfterLocks : assignmentEffectiveFrom,
-    );
+    // Close the current assignment exactly where the replacement begins, so
+    // the half-open intervals form an unbroken chain with no overlap.
+    await updateAssignmentEffectiveTo(tx, current.id, assignmentEffectiveFrom);
   }
 
   // Safety net: reject if another non-superseded assignment still overlaps.
@@ -171,21 +147,21 @@ async function createAssignmentImpl(
     const existing = await selectOverlappingAssignmentsByAccountForUpdate(
       tx,
       BigInt(accountId),
-      assignmentEffectiveFrom,
+      assignmentEffectiveFrom
     );
 
     if (existing.length > 0) {
-      throw new ConflictError("Overlapping account-level assignment exists");
+      throw new ConflictError('Overlapping account-level assignment exists');
     }
   } else {
     const existing = await selectOverlappingAssignmentsByUserForUpdate(
       tx,
       userId!,
-      assignmentEffectiveFrom,
+      assignmentEffectiveFrom
     );
 
     if (existing.length > 0) {
-      throw new ConflictError("Overlapping user-level assignment exists");
+      throw new ConflictError('Overlapping user-level assignment exists');
     }
   }
 
@@ -195,17 +171,25 @@ async function createAssignmentImpl(
     userId,
     BigInt(input.planId),
     assignmentEffectiveFrom,
-    null,
+    null
   );
 
-  return mapAssignment(assignment, plan.name, plan.type as "account" | "user", nowAfterLocks);
+  return mapAssignment(assignment, plan.name, plan.type as 'account' | 'user', nowAfterLocks);
 }
 
 function mapAssignment(
-  a: { id: bigint; accountId: bigint; userId: bigint | null; planId: bigint; effectiveFrom: Date; effectiveTo: Date | null; createdAt: Date },
+  a: {
+    id: bigint;
+    accountId: bigint;
+    userId: bigint | null;
+    planId: bigint;
+    effectiveFrom: Date;
+    effectiveTo: Date | null;
+    createdAt: Date;
+  },
   planName: string,
-  planType: "account" | "user",
-  at: Date = new Date(),
+  planType: 'account' | 'user',
+  at: Date = new Date()
 ): AssignmentInfo {
   return {
     id: Number(a.id),
@@ -220,8 +204,6 @@ function mapAssignment(
     effectiveFrom: a.effectiveFrom.toISOString(),
     effectiveTo: a.effectiveTo ? a.effectiveTo.toISOString() : null,
     createdAt: a.createdAt,
-    isCurrent:
-      a.effectiveFrom <= at &&
-      (a.effectiveTo === null || a.effectiveTo > at),
+    isCurrent: a.effectiveFrom <= at && (a.effectiveTo === null || a.effectiveTo > at),
   };
 }
