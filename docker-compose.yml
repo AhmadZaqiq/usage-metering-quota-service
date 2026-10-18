@@ -47,7 +47,10 @@ services:
       LOG_LEVEL: debug
       MAX_UNITS_PER_REQUEST: "10000"
       RATE_LIMIT_WINDOW_MS: "60000"
-      RATE_LIMIT_MAX: "100"
+      # Overridable for local load-test runs, e.g.:
+      #   RATE_LIMIT_MAX=10000000 docker compose up -d app
+      # Default stays at the production-representative 100 req/60s.
+      RATE_LIMIT_MAX: "${RATE_LIMIT_MAX:-100}"
       BOOTSTRAP_ACCOUNT_NAME: "Acme Corp"
       BOOTSTRAP_API_KEY_NAME: "Default Key"
     depends_on:
@@ -72,13 +75,12 @@ services:
       dockerfile: Dockerfile
     container_name: usage-metering-client
     environment:
-      DATABASE_URL: postgresql://app:app_secret@postgres:5432/usage_metering
       NODE_ENV: development
-      PORT: "3000"
     depends_on:
       app:
         condition: service_healthy
-    command: ["sh", "-c", "API_KEY=$(cat /run/secrets/api-key) && node dist/scripts/client.js -k \"$$API_KEY\" -n 5 -i demo-001 -u http://app:3000"]
+    # Demo CLI: reads the API key from the shared secrets volume itself.
+    command: ["node", "dist/scripts/client.js", "-u", "http://app:3000"]
     volumes:
       - bootstrap-secrets:/run/secrets
 
