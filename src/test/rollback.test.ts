@@ -1,14 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { getTestDb } from "./setup.js";
+import { getTestDb, getTestPool } from "./setup.js";
 import { accounts, users, plans, planAssignments, apiKeys, usageCounters, usageRequests } from "../db/schema/index.js";
 import { eq, and, isNull, sql } from "drizzle-orm";
 import { createApiKey } from "../application/auth/apiKeyService.js";
 import { createPlan } from "../application/plans/planService.js";
 import { createAssignment } from "../application/plans/assignmentService.js";
 import { processUsageRequest } from "../application/usage/usageService.js";
-import { formatDateForDb, getUtcMonthStart } from "../domain/date.js";
-import { BusinessError } from "../errors/AppError.js";
-import { upsertAndLockCounter } from "../infrastructure/repositories/counterRepository.js";
+import { getUtcMonthStart } from "../domain/date.js";
 import { db } from "../db/client.js";
 import { getRateLimiterStore, closeRateLimiterStore } from "../infrastructure/rateLimiter.js";
 
@@ -71,8 +69,11 @@ async function assignUserPlan(accountId: number, userId: string, planId: number)
   await createAssignment(accountId, { userId, planId, effectiveFrom }, accountId);
 }
 
+// Unique per invocation: uq_accounts_name requires live names to be unique.
+let contextSeq = 0;
+
 async function setupBasicTestContext() {
-  const account = await createTestAccount("Test Account");
+  const account = await createTestAccount(`Test Account ${++contextSeq}`);
   const apiKey = await createTestApiKey(account.id, "Test Key");
 
   const accountPlan = await createTestPlan(account.id, "Account Plan", "account", 1000n, 100n);
@@ -97,97 +98,167 @@ describe("Transaction Rollback Integration Tests", () => {
     // Tables are truncated in setup.ts afterEach
   });
 
-  describe("Rollback on counter increment failure", () => {
-    it("should roll back usage_requests insert if counter increment fails", async () => {
+  // TST-02: failures injected with temporary PostgreSQL triggers so the REAL
+  // processUsageRequest transaction (not a hand-written stand-in) must roll
+  // back every effect: counter creation, counter increments, and the
+  // usage_requests row.
+
+  type FailurePoint = {
+    table: "usage_requests" | "api_keys";
+    event: "INSERT" | "UPDATE";
+    column: string;
+    value: string;
+  };
+
+  async function armFailure(point: FailurePoint): Promise<void> {
+    const fn = `test_force_fail_${point.table}`;
+    await getTestPool().query(`
+      CREATE OR REPLACE FUNCTION ${fn}() RETURNS trigger AS $$
+      BEGIN
+        IF NEW.${point.column} = '${point.value}' THEN
+          RAISE EXCEPTION 'forced failure (TST-02) on ${point.table}';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+    await getTestPool().query(`DROP TRIGGER IF EXISTS test_force_fail_${point.table} ON ${point.table}`);
+    await getTestPool().query(`
+      CREATE TRIGGER test_force_fail_${point.table}
+      BEFORE ${point.event} ON ${point.table}
+      FOR EACH ROW EXECUTE FUNCTION ${fn}()
+    `);
+  }
+
+  async function disarmFailure(point: FailurePoint): Promise<void> {
+    await getTestPool().query(`DROP TRIGGER IF EXISTS test_force_fail_${point.table} ON ${point.table}`);
+    await getTestPool().query(`DROP FUNCTION IF EXISTS test_force_fail_${point.table}()`);
+  }
+
+  describe("Rollback through the real usage service", () => {
+    it("rolls back counter creation when the usage_requests insert fails", async () => {
       const context = await setupBasicTestContext();
-      const { account, user, apiKey } = context;
+      const point: FailurePoint = {
+        table: "usage_requests",
+        event: "INSERT",
+        column: "idempotency_key",
+        value: "forced-insert-failure",
+      };
+      await armFailure(point);
+      try {
+        await expect(
+          processUsageRequest(
+            context.account.id,
+            {
+              userId: context.user.clientUserId,
+              units: 1n,
+              idempotencyKey: "forced-insert-failure",
+            },
+            context.apiKey.id,
+          ),
+        ).rejects.toThrow(/forced failure/);
 
-      // Pre-consume all but 1 unit of account quota
-      const periodStart = formatDateForDb(getUtcMonthStart());
-      await upsertAndLockCounter(getTestDb(), BigInt(account.id), null, periodStart);
-      await getTestDb()
-        .update(usageCounters)
-        .set({ counter: 999n })
-        .where(eq(usageCounters.accountId, BigInt(account.id)))
-        .execute();
+        // Nothing persisted: no request record, no counter rows at all
+        // (the upsert that created them happened inside the rolled-back tx).
+        const requests = await getTestDb()
+          .select()
+          .from(usageRequests)
+          .where(eq(usageRequests.idempotencyKey, "forced-insert-failure"))
+          .execute();
+        expect(requests).toHaveLength(0);
 
-      // This test verifies transaction rollback behavior by injecting a failure
-      // during a manual transaction. We use a direct transaction to simulate
-      // a failure during processing, which should roll back all changes.
-
-      // First, verify a normal request works
-      const result = await processUsageRequest(account.id, {
-        userId: user.clientUserId,
-        units: 1n,
-        idempotencyKey: "rollback-test-1",
-      }, apiKey.id);
-
-      expect(result.decision).toBe("accepted");
-
-      // Verify counter was incremented (999 + 1 = 1000)
-      const [counter] = await getTestDb()
-        .select()
-        .from(usageCounters)
-        .where(eq(usageCounters.accountId, BigInt(account.id)))
-        .execute();
-
-      expect(Number(counter?.counter ?? 0n)).toBe(1000);
-
-      // Now test rollback: manually inject a failure inside a transaction
-      // by throwing an error after the counter is incremented but before
-      // the usage_request is committed. The transaction should roll back
-      // both the counter increment and any other changes.
-      await getTestDb().transaction(async (tx) => {
-        // Manually increment the counter to simulate the service doing work
-        await tx.execute(sql`
-          UPDATE usage_counters
-          SET counter = counter + 1n, updated_at = NOW()
-          WHERE account_id = ${BigInt(account.id)}
-            AND period_start = ${periodStart}
-        `);
-
-        // Throw an error to simulate a failure during processing
-        throw new Error("Simulated failure during processing");
-      }).catch(() => {
-        // Expected - the transaction should roll back
-      });
-
-      // Verify the counter was rolled back to 1000 (not 1001)
-      const [counterAfterRollback] = await getTestDb()
-        .select()
-        .from(usageCounters)
-        .where(eq(usageCounters.accountId, BigInt(account.id)))
-        .execute();
-
-      expect(Number(counterAfterRollback?.counter ?? 0n)).toBe(1000);
+        const counters = await getTestDb()
+          .select()
+          .from(usageCounters)
+          .where(eq(usageCounters.accountId, BigInt(context.account.id)))
+          .execute();
+        expect(counters).toHaveLength(0);
+      } finally {
+        await disarmFailure(point);
+      }
     });
-  });
 
-  describe("Rollback on decision insert failure", () => {
-    it("should roll back counter increments if decision insert fails", async () => {
-      // This test would require injecting a failure at the decision insert point
-      // Since we can't easily inject failures without modifying the service,
-      // we verify the transaction behavior through the existing retry logic
-      
-      // Test that a valid request succeeds and persists correctly
+    it("rolls back counter increments and the request row when a later step of the service fails", async () => {
       const context = await setupBasicTestContext();
-      
-      const result = await processUsageRequest(context.account.id, {
-        userId: context.user.clientUserId,
-        units: 5n,
-        idempotencyKey: "rollback-test-1",
-      }, context.apiKey.id);
+      const point: FailurePoint = {
+        table: "api_keys",
+        event: "UPDATE",
+        column: "name",
+        value: "fail-after-increment",
+      };
+      const failingKey = await createTestApiKey(context.account.id, point.value);
+
+      await armFailure(point);
+      try {
+        // Counter increments run inside the same transaction BEFORE
+        // updateApiKeyLastUsedAt; the forced failure must discard them too.
+        await expect(
+          processUsageRequest(
+            context.account.id,
+            {
+              userId: context.user.clientUserId,
+              units: 7n,
+              idempotencyKey: "forced-late-failure",
+            },
+            failingKey.id,
+          ),
+        ).rejects.toThrow(/forced failure/);
+
+        const requests = await getTestDb()
+          .select()
+          .from(usageRequests)
+          .where(eq(usageRequests.idempotencyKey, "forced-late-failure"))
+          .execute();
+        expect(requests).toHaveLength(0);
+
+        const counters = await getTestDb()
+          .select()
+          .from(usageCounters)
+          .where(eq(usageCounters.accountId, BigInt(context.account.id)))
+          .execute();
+        expect(counters).toHaveLength(0);
+
+        // The api_keys touch that failed did not stick either.
+        const [keyRow] = await getTestDb()
+          .select()
+          .from(apiKeys)
+          .where(eq(apiKeys.id, BigInt(failingKey.id)))
+          .execute();
+        expect(keyRow.lastUsedAt).toBeNull();
+      } finally {
+        await disarmFailure(point);
+      }
+    });
+
+    it("succeeds for the same request once the forced failure is removed", async () => {
+      const context = await setupBasicTestContext();
+
+      const result = await processUsageRequest(
+        context.account.id,
+        {
+          userId: context.user.clientUserId,
+          units: 5n,
+          idempotencyKey: "retry-after-rollback",
+        },
+        context.apiKey.id,
+      );
 
       expect(result.decision).toBe("accepted");
+      expect(result.accountRemaining.toString()).toBe("995");
 
-      // Verify counter was incremented
       const [counter] = await getTestDb()
         .select()
         .from(usageCounters)
         .where(eq(usageCounters.accountId, BigInt(context.account.id)))
         .execute();
-
       expect(Number(counter?.counter ?? 0n)).toBe(5);
+
+      const requests = await getTestDb()
+        .select()
+        .from(usageRequests)
+        .where(eq(usageRequests.idempotencyKey, "retry-after-rollback"))
+        .execute();
+      expect(requests).toHaveLength(1);
     });
   });
 
@@ -335,31 +406,9 @@ describe("Transaction Rollback Integration Tests", () => {
       await closeRateLimiterStore();
     });
 
-    it("should fail open when rate limiter store throws", async () => {
-      // Create a failing store that always throws
-      const failingStore = {
-        increment: async () => {
-          throw new Error("Simulated Redis failure");
-        },
-        reset: async () => {},
-        close: async () => {},
-      };
-
-      const { createRateLimiterMiddleware } = await import("../infrastructure/rateLimiter.js");
-
-      // Temporarily override the store by mocking getRateLimiterStore
-      // We test the middleware's catch behavior by calling it directly
-      const middleware = createRateLimiterMiddleware();
-
-      // We can't easily swap the store, but we can verify the catch block exists
-      // by checking the middleware function exists and is callable
-      expect(typeof middleware).toBe("function");
-
-      // Verify that when store.increment throws, the middleware calls next() (fail open)
-      // We test this by checking the catch block logic exists in the source
-      const middlewareSource = createRateLimiterMiddleware.toString();
-      expect(middlewareSource).toContain("catch");
-      expect(middlewareSource).toContain("next()");
-    });
+    // Rate-limiter failure policy is covered behaviorally in
+    // src/test/rateLimiter.test.ts: falling back to the in-process store,
+    // still enforcing limits when Redis is down, and failing closed when no
+    // store works (the old "fail open" contract was intentionally removed).
   });
 });

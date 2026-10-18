@@ -1,4 +1,4 @@
-import { pgTable, bigserial, varchar, boolean, timestamp, bigint, check, index } from "drizzle-orm/pg-core";
+import { pgTable, bigserial, varchar, boolean, timestamp, bigint, check } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { accounts } from "./accounts.js";
 
@@ -20,7 +20,10 @@ export const plans = pgTable(
     typeCheck: check("chk_plan_type", sql`${table.type} IN ('account', 'user')`),
     allowancePositive: check("chk_plan_allowance_positive", sql`${table.monthlyAllowance} > 0`),
     maxUnitsPositive: check("chk_plan_max_units_positive", sql`${table.maxUnitsPerRequest} > 0`),
-    activeIdx: index("idx_plans_active").on(table.id).where(sql`${table.isActive} = true AND ${table.deletedAt} IS NULL`),
+    // NOTE: uq_system_plans / uq_custom_plans (soft-delete-aware name uniques)
+    // and assignment overlap constraints are managed by custom SQL in
+    // src/db/sql/ — see README "Database migrations". Keep that channel
+    // authoritative; the generated Drizzle snapshot does not track them.
   })
 );
 

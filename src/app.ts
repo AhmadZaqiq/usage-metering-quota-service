@@ -2,7 +2,11 @@ import express, { Request, Response, NextFunction } from "express";
 import { authMiddleware } from "./presentation/middleware/authMiddleware.js";
 import { errorHandler } from "./errors/errorHandler.js";
 import { logger, createRequestLogger } from "./logging/logger.js";
-import { createRateLimiterMiddleware, closeRateLimiterStore } from "./infrastructure/rateLimiter.js";
+import {
+  createIpRateLimiterMiddleware,
+  createIdentityRateLimiterMiddleware,
+  closeRateLimiterStore,
+} from "./infrastructure/rateLimiter.js";
 import { getEnv } from "./config/index.js";
 import { asyncHandler } from "./presentation/middleware/asyncHandler.js";
 import { NotFoundError } from "./errors/AppError.js";
@@ -29,10 +33,16 @@ export function createApp(): express.Application {
 
   app.use(express.json({ limit: "64kb" }));
 
-  app.use((req: Request, _res: Response, next: NextFunction) => {
+  app.use((req: Request, res: Response, next: NextFunction) => {
     const requestId = (req.headers["x-request-id"] as string) || crypto.randomUUID();
     req.headers["x-request-id"] = requestId;
     req.logger = createRequestLogger(logger, requestId);
+    // Mirror the correlation id so clients and error logs share it.
+    res.setHeader("X-Request-Id", requestId);
+    // Minimal security headers for a JSON API.
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "no-referrer");
     next();
   });
 
@@ -55,16 +65,19 @@ export function createApp(): express.Application {
     next();
   });
 
-  const rateLimiter = createRateLimiterMiddleware();
-  app.use(rateLimiter);
+  // Layer 1: IP-keyed limit before authentication (never trusts credentials).
+  app.use(createIpRateLimiterMiddleware());
 
   app.use("/health", healthRoutes);
 
-  app.use("/usage", asyncHandler(authMiddleware), usageRoutes);
-  app.use("/api-keys", asyncHandler(authMiddleware), apiKeyRoutes);
-  app.use("/plans", asyncHandler(authMiddleware), planRoutes);
-  app.use("/assignments", asyncHandler(authMiddleware), assignmentRoutes);
-  app.use("/users", asyncHandler(authMiddleware), userRoutes);
+  // Layer 2: identity-keyed limit after successful verification (tenant isolation).
+  const authenticated = [asyncHandler(authMiddleware), createIdentityRateLimiterMiddleware()];
+
+  app.use("/usage", ...authenticated, usageRoutes);
+  app.use("/api-keys", ...authenticated, apiKeyRoutes);
+  app.use("/plans", ...authenticated, planRoutes);
+  app.use("/assignments", ...authenticated, assignmentRoutes);
+  app.use("/users", ...authenticated, userRoutes);
 
   app.use((_req: Request, _res: Response, next: NextFunction) => {
     next(new NotFoundError());

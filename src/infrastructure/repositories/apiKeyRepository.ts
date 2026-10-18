@@ -70,6 +70,33 @@ export async function selectApiKeysByAccount(
   return result.map(mapRowToApiKeyRow);
 }
 
+// Used by bootstrap to keep key creation idempotent across restarts: only an
+// active (non-revoked) key counts as "already present".
+export async function selectActiveApiKeyByName(
+  tx: Transaction,
+  accountId: bigint,
+  name: string,
+): Promise<ApiKeyRow | null> {
+  const result = await tx
+    .select({
+      id: apiKeys.id,
+      accountId: apiKeys.accountId,
+      prefix: apiKeys.prefix,
+      keyHash: apiKeys.keyHash,
+      name: apiKeys.name,
+      isRevoked: apiKeys.isRevoked,
+      createdAt: apiKeys.createdAt,
+      lastUsedAt: apiKeys.lastUsedAt,
+    })
+    .from(apiKeys)
+    .where(and(eq(apiKeys.accountId, accountId), eq(apiKeys.name, name), eq(apiKeys.isRevoked, false)))
+    .limit(1)
+    .execute();
+
+  if (result.length === 0) return null;
+  return mapRowToApiKeyRow(result[0]);
+}
+
 export async function updateApiKeyRevoked(
   tx: Transaction,
   keyId: bigint,

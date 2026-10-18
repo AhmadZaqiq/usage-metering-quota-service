@@ -1,8 +1,8 @@
-import { describe, it, expect } from "vitest";
-import { evaluateQuota } from "../domain/quotaEvaluator.js";
-import { MAX_UNITS_PER_REQUEST_BIGINT } from "../config/index.js";
+import { describe, it, expect } from 'vitest';
+import { evaluateQuota } from '../domain/quotaEvaluator.js';
+import { MAX_UNITS_PER_REQUEST_BIGINT } from '../config/index.js';
 
-describe("Quota Evaluator (Pure Function Unit Tests)", () => {
+describe('Quota Evaluator (Pure Function Unit Tests)', () => {
   const accountPlan = {
     monthlyAllowance: 1000n,
     maxUnitsPerRequest: 100n,
@@ -13,8 +13,8 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
     maxUnitsPerRequest: 10n,
   };
 
-  describe("Account quota boundary", () => {
-    it("should accept request that exactly consumes remaining account quota", () => {
+  describe('Account quota boundary', () => {
+    it('should accept request that exactly consumes remaining account quota', () => {
       const result = evaluateQuota({
         accountPlan,
         userPlan: null,
@@ -24,11 +24,11 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
-      expect(result.decision).toBe("accepted");
+      expect(result.decision).toBe('accepted');
       expect(result.accountRemaining).toBe(0n);
     });
 
-    it("should reject request exceeding remaining account quota by one unit", () => {
+    it('should reject request exceeding remaining account quota by one unit', () => {
       const result = evaluateQuota({
         accountPlan,
         userPlan: null,
@@ -38,12 +38,12 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
-      expect(result.decision).toBe("rejected");
-      expect(result.rejectionReason).toBe("account_quota_exceeded");
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('account_quota_exceeded');
       expect(result.accountRemaining).toBe(5n);
     });
 
-    it("should handle zero remaining quota correctly", () => {
+    it('should handle zero remaining quota correctly', () => {
       const result = evaluateQuota({
         accountPlan,
         userPlan: null,
@@ -53,13 +53,14 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
-      expect(result.decision).toBe("rejected");
-      expect(result.rejectionReason).toBe("account_quota_exceeded");
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('account_quota_exceeded');
       expect(result.accountRemaining).toBe(0n);
     });
 
-    it("should reject negative remaining quota", () => {
-      // Edge case: admin manually set counter > allowance
+    it('clamps remaining at zero when usage exceeds the (reduced) allowance', () => {
+      // Allowance reduced below already-consumed usage: report zero
+      // remaining, never a negative balance, and still reject.
       const result = evaluateQuota({
         accountPlan,
         userPlan: null,
@@ -69,14 +70,14 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
-      expect(result.decision).toBe("rejected");
-      expect(result.rejectionReason).toBe("account_quota_exceeded");
-      expect(result.accountRemaining).toBe(-5n);
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('account_quota_exceeded');
+      expect(result.accountRemaining).toBe(0n);
     });
   });
 
-  describe("User quota boundary", () => {
-    it("should accept request that exactly consumes remaining user quota", () => {
+  describe('User quota boundary', () => {
+    it('should accept request that exactly consumes remaining user quota', () => {
       const result = evaluateQuota({
         accountPlan,
         userPlan,
@@ -86,11 +87,11 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
-      expect(result.decision).toBe("accepted");
+      expect(result.decision).toBe('accepted');
       expect(result.userRemaining).toBe(0n);
     });
 
-    it("should reject request exceeding remaining user quota by one unit", () => {
+    it('should reject request exceeding remaining user quota by one unit', () => {
       const result = evaluateQuota({
         accountPlan,
         userPlan,
@@ -100,12 +101,28 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
-      expect(result.decision).toBe("rejected");
-      expect(result.rejectionReason).toBe("user_quota_exceeded");
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('user_quota_exceeded');
       expect(result.userRemaining).toBe(5n);
     });
 
-    it("should enforce both account and user quota simultaneously (account checked first)", () => {
+    it('clamps user remaining at zero when usage exceeds the reduced user allowance', () => {
+      const result = evaluateQuota({
+        accountPlan,
+        userPlan,
+        accountUsed: 500n,
+        userUsed: 120n,
+        requestedUnits: 1n,
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
+      });
+
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('user_quota_exceeded');
+      expect(result.userRemaining).toBe(0n);
+      expect(result.accountRemaining).toBe(500n);
+    });
+
+    it('should enforce both account and user quota simultaneously (account checked first)', () => {
       // Account has 2 remaining, user has 2 remaining, request 3
       // Account quota is checked first, so it fails on account quota
       const result = evaluateQuota({
@@ -117,13 +134,13 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
-      expect(result.decision).toBe("rejected");
-      expect(result.rejectionReason).toBe("account_quota_exceeded");
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('account_quota_exceeded');
     });
   });
 
-  describe("Per-request maximum", () => {
-    it("should accept request at exactly max per request", () => {
+  describe('Per-request maximum', () => {
+    it('should accept request at exactly max per request', () => {
       const result = evaluateQuota({
         accountPlan,
         userPlan: null,
@@ -133,10 +150,10 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
-      expect(result.decision).toBe("accepted");
+      expect(result.decision).toBe('accepted');
     });
 
-    it("should reject request exceeding max per request by one unit", () => {
+    it('should reject request exceeding max per request by one unit', () => {
       const result = evaluateQuota({
         accountPlan,
         userPlan: null,
@@ -146,11 +163,13 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
-      expect(result.decision).toBe("rejected");
-      expect(result.rejectionReason).toBe("max_per_request_exceeded");
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('max_per_request_exceeded');
+      // The account plan's own cap (100) binds before the global limit (10000).
+      expect(result.limitScope).toBe('account');
     });
 
-    it("should reject zero units", () => {
+    it('should reject zero units', () => {
       const result = evaluateQuota({
         accountPlan,
         userPlan: null,
@@ -160,11 +179,11 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
-      expect(result.decision).toBe("rejected");
-      expect(result.rejectionReason).toBe("max_per_request_exceeded");
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('max_per_request_exceeded');
     });
 
-    it("should reject negative units", () => {
+    it('should reject negative units', () => {
       const result = evaluateQuota({
         accountPlan,
         userPlan: null,
@@ -174,11 +193,11 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
-      expect(result.decision).toBe("rejected");
-      expect(result.rejectionReason).toBe("max_per_request_exceeded");
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('max_per_request_exceeded');
     });
 
-    it("should reject units exceeding global MAX_UNITS_PER_REQUEST", () => {
+    it('should reject units exceeding global MAX_UNITS_PER_REQUEST', () => {
       const result = evaluateQuota({
         accountPlan,
         userPlan: null,
@@ -188,11 +207,12 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
-      expect(result.decision).toBe("rejected");
-      expect(result.rejectionReason).toBe("max_per_request_exceeded");
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('max_per_request_exceeded');
+      expect(result.limitScope).toBe('global');
     });
 
-    it("should respect the lower of account and user max per request", () => {
+    it('should respect the lower of account and user max per request', () => {
       const result = evaluateQuota({
         accountPlan: { monthlyAllowance: 1000n, maxUnitsPerRequest: 50n },
         userPlan: { monthlyAllowance: 100n, maxUnitsPerRequest: 10n },
@@ -202,13 +222,74 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
-      expect(result.decision).toBe("rejected");
-      expect(result.rejectionReason).toBe("max_per_request_exceeded");
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('max_per_request_exceeded');
+      expect(result.limitScope).toBe('user');
+    });
+
+    it('should attribute the breach to account when the account cap binds', () => {
+      const result = evaluateQuota({
+        accountPlan: { monthlyAllowance: 1000n, maxUnitsPerRequest: 10n },
+        userPlan: { monthlyAllowance: 100n, maxUnitsPerRequest: 50n },
+        accountUsed: 0n,
+        userUsed: 0n,
+        requestedUnits: 15n, // Over account limit (10) but under user limit (50)
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
+      });
+
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('max_per_request_exceeded');
+      expect(result.limitScope).toBe('account');
+    });
+
+    it('should attribute the breach to account when caps are equal', () => {
+      const result = evaluateQuota({
+        accountPlan: { monthlyAllowance: 1000n, maxUnitsPerRequest: 10n },
+        userPlan: { monthlyAllowance: 100n, maxUnitsPerRequest: 10n },
+        accountUsed: 0n,
+        userUsed: 0n,
+        requestedUnits: 11n,
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
+      });
+
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('max_per_request_exceeded');
+      expect(result.limitScope).toBe('account');
+    });
+
+    it('should attribute the breach to account when there is no user plan', () => {
+      const result = evaluateQuota({
+        accountPlan: { monthlyAllowance: 1000n, maxUnitsPerRequest: 10n },
+        userPlan: null,
+        accountUsed: 0n,
+        userUsed: 0n,
+        requestedUnits: 11n,
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
+      });
+
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('max_per_request_exceeded');
+      expect(result.limitScope).toBe('account');
+    });
+
+    it('should omit limitScope when the rejection is not a per-request-cap breach', () => {
+      const result = evaluateQuota({
+        accountPlan: { monthlyAllowance: 10n, maxUnitsPerRequest: 100n },
+        userPlan: null,
+        accountUsed: 10n,
+        userUsed: 0n,
+        requestedUnits: 5n,
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
+      });
+
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('account_quota_exceeded');
+      expect(result.limitScope).toBeUndefined();
     });
   });
 
-  describe("Bigint arithmetic correctness", () => {
-    it("should handle values at database limit within MAX_UNITS_PER_REQUEST", () => {
+  describe('Bigint arithmetic correctness', () => {
+    it('should handle values at database limit within MAX_UNITS_PER_REQUEST', () => {
       const result = evaluateQuota({
         accountPlan: {
           monthlyAllowance: 9223372036854775807n, // MAX BIGINT
@@ -221,13 +302,16 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
-      expect(result.decision).toBe("accepted");
+      expect(result.decision).toBe('accepted');
       expect(result.accountRemaining).toBe(9223372036854775807n - MAX_UNITS_PER_REQUEST_BIGINT);
     });
 
-    it("should handle large values correctly without floating point errors", () => {
+    it('should handle large values correctly without floating point errors', () => {
       const result = evaluateQuota({
-        accountPlan: { monthlyAllowance: 10000000000000000n, maxUnitsPerRequest: 1000000000000000n },
+        accountPlan: {
+          monthlyAllowance: 10000000000000000n,
+          maxUnitsPerRequest: 1000000000000000n,
+        },
         userPlan: { monthlyAllowance: 1000000000000000n, maxUnitsPerRequest: 100000000000000n },
         accountUsed: 9999999999999999n,
         userUsed: 99999999999999n,
@@ -235,7 +319,7 @@ describe("Quota Evaluator (Pure Function Unit Tests)", () => {
         maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
       });
 
-      expect(result.decision).toBe("accepted");
+      expect(result.decision).toBe('accepted');
       expect(result.accountRemaining).toBe(0n);
       expect(result.userRemaining).toBe(1000000000000000n - 99999999999999n - 1n);
     });

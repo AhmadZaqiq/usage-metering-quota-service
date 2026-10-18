@@ -2,6 +2,7 @@ import { drizzle, NodePgDatabase } from "drizzle-orm/node-postgres";
 import { Pool, PoolConfig } from "pg";
 import * as schema from "./schema/index.js";
 import { getEnv } from "../config/index.js";
+import { logger } from "../logging/logger.js";
 
 const env = getEnv();
 
@@ -10,12 +11,15 @@ const poolConfig: PoolConfig = {
   max: 20,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
+  // Server-side bound: a single runaway statement (or a statement stuck in a
+  // lock wait) fails fast instead of holding a pool connection indefinitely.
+  statement_timeout: 15_000,
 };
 
 export const pool = new Pool(poolConfig);
 
 pool.on("error", (err) => {
-  console.error("Unexpected pool error", err);
+  logger.error({ err }, "Unexpected pool error");
 });
 
 export const db: NodePgDatabase<typeof schema> = drizzle(pool, { schema, logger: false });
@@ -54,6 +58,10 @@ export async function withTransaction<T>(
 
       if (pgCode && RETRYABLE_CODES.has(pgCode) && attempt < maxRetries) {
         const delay = baseDelayMs * Math.pow(2, attempt);
+        logger.warn(
+          { pgCode, attempt: attempt + 1, maxRetries, delayMs: delay },
+          "Retryable transaction failure, retrying"
+        );
         await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
       }

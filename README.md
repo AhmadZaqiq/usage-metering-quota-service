@@ -10,16 +10,18 @@ A professional, backend-only Usage Metering & Quota Service built with TypeScrip
 
 - **API-Key Authentication**: Secure API keys with SHA-256 hashing, prefix identification, and revocation
 - **Tenant Isolation**: All operations scoped to authenticated account; no client-supplied account IDs trusted
-- **Plan Management**: System-defined plans and account-owned custom plans with activation/deactivation
+- **Seeded System Plans**: A predefined catalog (Starter, Pro, Basic, Premium) is idempotently seeded on every bootstrap; system plans are read-only for every tenant, while accounts can still create and manage their own custom plans
 - **Plan Assignments**: Account-level and user-level assignments with effective dates and history
 - **Monthly Quota Periods**: UTC-based monthly accounting with separate account and user counters
 - **Idempotency**: Deterministic request hashing prevents duplicate consumption on retries
 - **Concurrency Safety**: Pessimistic locking (`SELECT FOR UPDATE`) with consistent lock ordering
+- **Per-Request Breach Scope**: A `max_per_request_exceeded` rejection reports which cap rejected the request (`global`, `account`, or `user`) so clients can tell a plan cap apart from the global limit
 - **Structured Logging**: Pino-based request/decision logging with correlation IDs
 - **Health Endpoints**: Liveness (`/health/live`) and readiness (`/health/ready`) probes
-- **Rate Limiting**: In-memory rate limiting (per IP for unauthenticated, per key prefix for authenticated)
-- **Redis-backed Distributed Rate Limiting**: Optional Redis store for multi-instance deployments (falls back to in-memory)
-- **Docker Support**: Docker Compose for local development with PostgreSQL 16
+- **Rate Limiting**: Two layers — per-IP before authentication, per-API-key after; Redis-backed with in-process fallback (falling back to a bounded in-memory store per instance; if both stores fail, requests are rejected 429 — fail-closed)
+- **Docker Support**: Docker Compose for local development with PostgreSQL 16; the container starts as root only to repair the secrets volume's ownership, then drops to the unprivileged `node` user before serving traffic
+- **Example Client**: Demo CLI that walks the full lifecycle end to end (accepted usage, all three rejection types, divergent per-user plans, immediate plan changes, idempotent replay, and proof that rejected requests are preserved in history)
+- **Accounting Invariant Verifier**: `verify-invariants` script cross-checks counters against the decision log and exits non-zero on any mismatch
 
 ---
 
@@ -61,11 +63,13 @@ graph TD
 
 ### Key Design Decisions
 
-- **Pure Quota Evaluator**: `quotaEvaluator.ts` is a pure function with no DB/HTTP dependencies
+- **Seeded System Plans**: `bootstrap.ts` idempotently seeds a shared, ownerless catalog (Starter and Pro as account plans; Basic and Premium as user plans) on every run, using the `uq_system_plans` unique violation to make concurrent seeding safe. A fresh account is assigned **Starter** by default; accounts that already have a current assignment are left untouched. Because system plans have a `NULL` owner, `planService` rejects any attempt to modify or delete them (`403`), so the shared catalog is read-only for every tenant while custom plans remain fully manageable
+- **Pure Quota Evaluator**: `quotaEvaluator.ts` is a pure function with no DB/HTTP dependencies; remaining balances are clamped at zero (never negative) when an allowance is lowered below already-consumed usage. When a request exceeds a per-request cap, the evaluator also reports *which* cap rejected it (`limitScope`: `global` / `account` / `user`)
 - **Nullable user_id**: `NULL` user_id represents account-level counters (avoids partial index ORM issues; partial unique indexes enforce uniqueness per NULL vs non-NULL)
 - **Idempotency in `usage_requests`**: No separate table; unique constraint on `(account_id, idempotency_key)` + request hash
-- **Next-Month Plan Changes**: Plan changes take effect at next UTC month boundary to prevent mid-month quota gaming
-- **PostgreSQL Constraints as Source of Truth**: Exclusion constraints, triggers, partial unique indexes enforce invariants
+- **Immediate Plan Changes**: Plan switches apply to the very next request; the current assignment is closed at the replacement's start (half-open chain) and pending rows are superseded. Counters are never reset. Changes are stamped only after row locks are acquired, so a wait cannot backdate them
+- **Fail-Closed Plan Requirements**: A user-scoped request with no effective user plan is rejected `409` — it never silently falls back to account-only quota
+- **PostgreSQL Constraints as Source of Truth**: Exclusion constraints, triggers, composite tenant foreign keys, partial unique indexes enforce invariants
 
 ---
 
@@ -85,10 +89,10 @@ graph TD
 
 ### Key Constraints
 
-- **Partial Unique Indexes**: One current account-level assignment per account, one current user-level assignment per user
-- **Exclusion Constraint**: Prevents overlapping assignment periods for same subject
+- **Partial Unique Indexes**: One current account-level assignment per account, one current user-level assignment per user; one live account name; soft-delete-aware plan name uniques
+- **Exclusion Constraints**: `no_overlap_account_assignments` and `no_overlap_user_assignments` (partial, `btree_gist`) prevent overlapping assignment periods per subject; `chk_assignment_range` rejects inverted ranges
 - **Trigger**: Enforces plan-type compatibility (account plan ↔ account assignment, user plan ↔ user assignment)
-- **Composite FK**: `(account_id, user_id) → users(account_id, id)` guarantees user belongs to account
+- **Composite Tenant FKs**: `(account_id, user_id) → users(account_id, id)` on `usage_counters`, `usage_requests`, and `plan_assignments` guarantees the user belongs to the stated account (NULL user_id passes via MATCH SIMPLE)
 - **Check Constraints**: Positive allowances, positive units, non-negative counters
 
 ---
@@ -96,9 +100,9 @@ graph TD
 ## Quota Evaluation
 
 ### Monthly Periods
-- All periods calculated in UTC using `date_trunc('month', now() AT TIME ZONE 'UTC')`
+- All periods computed in UTC in the application (`domain/date.ts` → first instant of the current UTC month)
 - Period represented as `DATE` (first day of month, e.g., `2026-10-01`)
-- Computed once per request and passed through transaction
+- Computed once per request (before the transaction) and passed through the transaction unchanged
 
 ### Decision Logic
 For each request, the service evaluates (in order):
@@ -107,33 +111,57 @@ For each request, the service evaluates (in order):
 2. **Account quota**: `units ≤ account_plan.monthly_allowance - account_counter`
 3. **User quota** (if applicable): `units ≤ user_plan.monthly_allowance - user_counter`
 
+### Fail-Closed Plan Requirements
+
+Missing plan configuration is a **state conflict**, not a quota outcome:
+
+- No effective **account** plan → `409 CONFLICT` (`No active account plan assigned`)
+- `userId` supplied but no effective **user** plan → `409 CONFLICT` (`No active user plan assigned for user`) — no silent account-only fallback
+- Account-scoped requests (no `userId`) intentionally use account quota only
+
+Rejected requests never consume quota: their decision is recorded in the `usage_requests` decision log (for audit and idempotent replay), but the counters are not incremented. Validation failures (`400`) are rejected before the service runs and persist nothing.
+
 ### Response Fields
 ```json
 {
   "decision": "accepted" | "rejected",
   "rejectionReason": "account_quota_exceeded" | "user_quota_exceeded" | "max_per_request_exceeded",
+  "limitScope": "global" | "account" | "user",
   "accountRemaining": "995",
   "userRemaining": "495",
   "periodStart": "2026-10-01"
 }
 ```
 
+`limitScope` is present **only** when `rejectionReason` is `max_per_request_exceeded`, and it identifies which per-request cap rejected the request:
+
+| Value | Meaning |
+|-------|---------|
+| `global` | The request exceeded the server-wide `MAX_UNITS_PER_REQUEST` limit |
+| `account` | The request exceeded the account plan's `maxUnitsPerRequest` (also used when caps are equal, or when no user plan applies) |
+| `user` | The request exceeded the user plan's `maxUnitsPerRequest`, which was the tighter of the two caps |
+
+It is not persisted, so an idempotent replay of a stored rejection omits it rather than re-evaluating quota.
+
 ---
 
 ## Idempotency & Concurrency
 
 ### Idempotency
-- Client supplies `idempotencyKey` (1-255 chars)
+- Client supplies `idempotencyKey` (1-255 chars); `userId` (if present) must be non-empty
 - Server computes SHA-256 hash of canonical request: `{ accountId, userId, units }`
-- **Same key + same hash** → returns original decision (no quota consumed)
+- **Same key + same hash** → returns original decision (no additional quota consumed)
 - **Same key + different hash** → `409 Conflict`
 - Unique constraint on `(account_id, idempotency_key)` prevents duplicate processing
+- **Keys are unique per account for the life of the account, not per month**: a replayed key returns the original committed decision — including its original `periodStart` and remaining values — and never consumes quota in the current period
 
 ### Concurrency Strategy
 - **Isolation Level**: `READ COMMITTED` (PostgreSQL default)
-- **Lock Order**: Account counter → User counter (consistent ordering prevents deadlocks)
+- **Usage Lock Order**: Account counter → User counter (consistent ordering prevents deadlocks)
 - **Counter Creation**: Atomic `INSERT ... ON CONFLICT DO UPDATE SET counter = counter` (no-op update acquires lock)
-- **Retry Policy**: 3 retries with exponential backoff (50/100/200ms) on deadlock (`40P01`) and serialization failure (`40001`)
+- **Assignment Lock Order**: Target plan row → subject's assignment rows (`FOR UPDATE`); assignment decisions are stamped with a clock read taken *after* the locks are acquired
+- **Assign vs delete/deactivate**: the plan row is locked `FOR UPDATE` for the whole service transaction; a waiter re-evaluates `deleted_at`/`is_active` under READ COMMITTED (EvalPlanQual) and fails with `404`/`409` instead of acting on a stale row
+- **Retry Policy**: 3 retries with exponential backoff (50/100/200ms) on deadlock (`40P01`) and serialization failure (`40001`), logged per retry
 
 ---
 
@@ -165,7 +193,7 @@ API key format: `<prefix>.<secret>` (prefix stored plain, secret hashed with SHA
 | `GET` | `/plans` | Yes | List plans (system + own custom) |
 | `GET` | `/plans/:id` | Yes | Get plan details |
 | `PATCH` | `/plans/:id` | Yes | Update own custom plan |
-| `DELETE` | `/plans/:id` | Yes | Soft delete own custom plan |
+| `DELETE` | `/plans/:id` | Yes | Soft delete own custom plan (409 if currently or pending assigned) |
 
 #### Assignments
 | Method | Path | Auth | Description |
@@ -173,6 +201,18 @@ API key format: `<prefix>.<secret>` (prefix stored plain, secret hashed with SHA
 | `POST` | `/assignments` | Yes | Assign plan to account/user |
 | `GET` | `/assignments` | Yes | List all assignments (current + history) |
 | `GET` | `/assignments/current` | Yes | Get current assignments |
+
+##### Assignment timing
+
+Plan changes follow an **immediate** model: the new assignment takes effect on the very next usage request.
+
+- `effectiveFrom` is optional. It is honored only for the **first** assignment to a subject (no current assignment). When a current assignment exists, the change starts **now** (stamped after locks are acquired), regardless of the client-provided value.
+- Switching plans closes the current assignment at the replacement's start (half-open intervals: `effectiveTo` equals the successor's `effectiveFrom`), so exactly one assignment is in effect at any instant. History rows are never deleted.
+- A newer change also **supersedes** any not-yet-effective (pending) row for the same subject; the superseded row becomes a zero-width audit artifact (`effectiveTo = effectiveFrom`) and never covers any instant.
+- Usage counters are **never reset** by a plan change. Remaining quota = effective plan's allowance − usage already consumed this UTC month.
+- Lowering an allowance **below already-consumed usage** clamps remaining to `0` (never negative); further requests at that level are rejected (`account_quota_exceeded` / `user_quota_exceeded`) until the allowance is raised again. Raising applies immediately.
+- Assignment responses return full ISO-8601 instants for `effectiveFrom`/`effectiveTo`.
+- Soft-deleting or deactivating a plan that is current or pending for any subject returns **409 Conflict**. Reassign first.
 
 #### Users
 | Method | Path | Auth | Description |
@@ -184,6 +224,7 @@ API key format: `<prefix>.<secret>` (prefix stored plain, secret hashed with SHA
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | `POST` | `/usage` | Yes | Submit usage request |
+| `GET` | `/usage` | Yes | Usage decision history (paginated: `page`, `limit`) |
 
 ### Usage Request
 ```json
@@ -219,12 +260,24 @@ Content-Type: application/json
 }
 ```
 
+For a per-request-cap rejection, `limitScope` is also present:
+```json
+{
+  "decision": "rejected",
+  "rejectionReason": "max_per_request_exceeded",
+  "limitScope": "user",
+  "accountRemaining": "995",
+  "userRemaining": "495",
+  "periodStart": "2026-10-01"
+}
+```
+
 ### Error Responses
 All errors follow consistent format:
 ```json
 {
   "error": {
-    "code": "VALIDATION_ERROR" | "AUTHENTICATION_FAILED" | "AUTHORIZATION_FAILED" | "NOT_FOUND" | "CONFLICT" | "RATE_LIMITED" | "INTERNAL_ERROR",
+    "code": "VALIDATION_ERROR" | "AUTHENTICATION_FAILED" | "AUTHORIZATION_FAILED" | "NOT_FOUND" | "CONFLICT" | "RATE_LIMITED" | "PAYLOAD_TOO_LARGE" | "INTERNAL_ERROR",
     "message": "Human-readable description",
     "details": {}
   }
@@ -233,12 +286,13 @@ All errors follow consistent format:
 
 | HTTP Status | Error Code | Meaning |
 |-------------|------------|---------|
-| 400 | `VALIDATION_ERROR` | Invalid request body/params |
-| 401 | `AUTHENTICATION_FAILED` | Missing/invalid API key |
-| 403 | `AUTHORIZATION_FAILED` | Revoked key, inactive/deleted account |
-| 404 | `NOT_FOUND` | Resource not found |
-| 409 | `CONFLICT` | Idempotency key reused with different payload |
-| 429 | `RATE_LIMITED` | Rate limit exceeded |
+| 400 | `VALIDATION_ERROR` | Invalid request body/params (e.g., empty `userId`, malformed `units`, malformed JSON payload) |
+| 401 | `AUTHENTICATION_FAILED` | Missing, malformed, unknown, or revoked API key; inactive or deleted account |
+| 403 | `AUTHORIZATION_FAILED` | Authenticated but not allowed (cross-tenant resource, ownership violation) |
+| 404 | `NOT_FOUND` | Resource not found, soft-deleted, or `userId` not in this account; plan vanished while waiting for a lock |
+| 409 | `CONFLICT` | Idempotency key reused with different payload; no effective account/user plan (fail-closed); plan currently or pending assigned (delete/deactivate); overlapping assignment; assignment subject/plan conflict |
+| 413 | `PAYLOAD_TOO_LARGE` | Request body above the 64 KB limit |
+| 429 | `RATE_LIMITED` | Rate limit exceeded (per-IP or per-API-key layer); includes `Retry-After` and `X-RateLimit-*` headers |
 | 500 | `INTERNAL_ERROR` | Unexpected server error |
 
 ---
@@ -270,18 +324,28 @@ TRUST_PROXY=false
 
 ### Docker Compose (Recommended)
 
+The image is multi-stage (build → runtime, production dependencies only). The container starts as **root** only long enough for `docker-entrypoint.sh` to repair ownership of the `/run/secrets` volume (which Docker creates root-owned), then it drops to the unprivileged `node` user via busybox `su` before running migrations, bootstrap, and the server in that order on every start. The serving process therefore always runs as `node`:
+
 ```bash
-# Start PostgreSQL and app
-docker compose up -d
+# If a local PostgreSQL already occupies port 5432, publish elsewhere:
+#   POSTGRES_PORT=5434 docker compose up -d --build
+docker compose up -d --build
 
-# Run migrations (first time or after schema changes)
-docker compose exec app npx tsx --env-file=.env src/db/migrate.ts
-
-# Create initial account and API key
-docker compose exec app npx tsx --env-file=.env src/scripts/bootstrap.ts
+# On the FIRST start, the logs contain the generated key — save it:
+docker compose logs app | grep -A1 "BOOTSTRAP API KEY"
 ```
 
-The bootstrap command outputs the full API key **once** — save it.
+Migrations are forward-only and idempotent (advisory-locked), so restarts are safe. The key is persisted to the `bootstrap-secrets` volume at `/run/secrets/api-key` (owned by `node`, mode `0600`; the directory is mode `0700`) and reused on later restarts; it is never re-printed. If the key file is missing but the key row survives (e.g. the volume was wiped), bootstrap rotates to a new key: it writes the replacement first, and only revokes the old key after the write succeeds, so a failed write can never strand the account with no usable key. To rotate or rerun bootstrap manually inside the container:
+
+```bash
+docker compose exec app node dist/scripts/bootstrap.js
+```
+
+The bootstrap command outputs the full API key **once** — save it. The `client` service runs the demo CLI against `http://app:3000` using that key:
+
+```bash
+docker compose run --rm client
+```
 
 ### Local Development (without Docker)
 
@@ -337,11 +401,31 @@ curl -X POST http://localhost:3000/usage \
   -d '{"userId": "user123", "units": "5", "idempotencyKey": "req-001"}'
 ```
 
-### Example Client
-A simple CLI client is included:
+### Example Client (Demo CLI)
+
+`src/scripts/client.ts` is an HTTP-only example tenant client with two modes:
 
 ```bash
-npm run client -- -k <API_KEY> -n 5 -i req-001 [--userId user123] [-u http://localhost:3000]
+# Demo walkthrough (default): health gate, 3 fresh demo users on two different
+# user plans (a small plan and a higher "Plus" plan, proving the same units
+# yield different remainings and different accept/reject decisions), accepted
+# usage, user/account/per-request rejections (including the reported
+# limitScope), immediate plan changes, idempotent replay, credential + input
+# rejections, and a history check proving rejected requests are preserved.
+# Exit code 0 = all checks passed; the full API key is never printed.
+npm run client -- -k <API_KEY>            # key also read from /run/secrets/api-key
+npm run client                            # Docker Compose: reads the secrets volume
+
+# Single request mode
+npm run client -- -n 5 -i req-001 --userId user123 -k <API_KEY>
+
+npm run client -- --help
+```
+
+Inside Docker Compose the demo runs as its own one-shot service:
+
+```bash
+docker compose run --rm client    # target http://app:3000, key from /run/secrets
 ```
 
 ---
@@ -360,13 +444,15 @@ npm run client -- -k <API_KEY> -n 5 -i req-001 [--userId user123] [-u http://loc
 | `npm run typecheck` | TypeScript strict check |
 | `npm test` | Run Vitest suite |
 | `npm run test:watch` | Watch mode for tests |
+| `npm run test:coverage` | Run suite with `@vitest/coverage-v8` |
 | `npm run db:generate` | Generate Drizzle migration |
 | `npm run db:migrate` | Apply migrations |
 | `npm run db:studio` | Open Drizzle Studio |
-| `npm run bootstrap` | Create initial account + API key |
+| `npm run bootstrap` | Seed system plans, create initial account + API key, assign Starter |
 | `npm run bootstrap:loadtest` | Create load test account + API key |
 | `npm run loadtest` | Run Autocannon load test |
-| `npm run client` | Run example CLI client |
+| `npm run client` | Run example CLI client (demo walkthrough by default) |
+| `npm run verify:invariants` | Cross-check usage counters against the decision log |
 
 ### Testing
 
@@ -378,37 +464,59 @@ npm test
 npm run test:coverage
 ```
 
-Tests use real PostgreSQL (test database via Docker Compose). No mocks for database behavior.
+Tests use real PostgreSQL (test database via Docker Compose). No mocks for database behavior. The suite includes unit tests (pure domain), HTTP integration tests through the real Express pipeline (auth, validation, usage decisions, rate limiting), concurrency tests, and direct-SQL constraint proofs. As of the latest run: **17 test files, 192 tests, all passing**.
+
+After running the demo or a load test, verify that counters still match the decision log:
+
+```bash
+docker compose run --rm app node dist/scripts/verify-invariants.js
+# or locally against a configured DATABASE_URL:
+npm run verify:invariants
+```
+
+The script checks account/user counters against accepted usage, non-negative stored remainings, UTC period alignment, tenant pairing, idempotency-key uniqueness, and exits non-zero on any violation.
 
 ### Load Testing
 
 ```bash
-# Bootstrap a test account
-export BOOTSTRAP_ACCOUNT_NAME=loadtest-account
-export BOOTSTRAP_API_KEY_NAME=loadtest-key
-npm run bootstrap:loadtest
+# Start the stack with the rate limiter raised (measurement only)
+RATE_LIMIT_MAX=10000000 docker compose up -d --build
 
-# Run load test with the generated API key
+# Bootstrap a load-test account inside the app container (prints the key once)
+docker compose run --rm \
+  -e BOOTSTRAP_ACCOUNT_NAME=loadtest-account \
+  -e BOOTSTRAP_API_KEY_NAME=loadtest-key \
+  app node dist/scripts/bootstrap-loadtest.js
+
+# Run load test with the generated API key (localhost targets only)
 export LOADTEST_API_KEY=<your-key>
-npm run loadtest -- --duration 10 --connections 10 --pipelining 1 --units 1
+npm run loadtest -- --duration 30 --connections 10 --pipelining 1 --units 1
+
+# Verify invariants, then restore the default rate limit
+docker compose run --rm app node dist/scripts/verify-invariants.js
+docker compose up -d app
 ```
+
+A recorded run with full method and database evidence: [`docs/performance/2026-10-18-compose.md`](docs/performance/2026-10-18-compose.md).
 
 ---
 
 ## Project Structure
 
 ```
+Dockerfile                      # Multi-stage build; entrypoint drops root → node
+docker-entrypoint.sh            # Repairs /run/secrets ownership, drops to node, runs CMD
 src/
 ├── main.ts                     # Entry point, graceful shutdown
 ├── app.ts                      # Express app factory, middleware wiring
 ├── config/
 │   └── index.ts                # Zod-validated environment configuration
 ├── db/
-│   ├── client.ts               # Connection pool, Drizzle client, transactions
-│   ├── migrate.ts              # Migration runner
+│   ├── client.ts               # Connection pool (statement_timeout), Drizzle client, retrying transactions
+│   ├── migrate.ts              # Migration runner (advisory-locked)
 │   ├── schema/                 # Drizzle table definitions (7 tables)
 │   ├── migrations/             # Drizzle-generated SQL migrations
-│   └── sql/                    # Custom SQL (constraints, triggers, extensions)
+│   └── sql/                    # Custom SQL (constraints, triggers, extensions; 0004_integrity_fixes.sql)
 ├── domain/                     # Pure business rules (no framework/DB imports)
 │   ├── quotaEvaluator.ts       # Quota decision logic (pure function)
 │   ├── idempotency.ts          # Request hash computation
@@ -460,18 +568,31 @@ src/
 ├── validation/
 │   └── schemas.ts              # Zod input validation schemas
 ├── scripts/
-│   ├── bootstrap.ts            # Create initial account, plan, assignment, API key
+│   ├── bootstrap.ts            # Seed system plans, create account + API key, assign Starter
 │   ├── bootstrap-loadtest.ts   # Create load-test account, plans, user, API key
-│   ├── client.ts               # Example CLI client for /usage endpoint
-│   └── loadtest.ts             # Autocannon load test script
+│   ├── client.ts               # Example CLI client: demo walkthrough + single request
+│   ├── loadtest.ts             # Autocannon load test script
+│   └── verify-invariants.ts    # Accounting invariant checks (counters vs decision log)
 └── test/
     ├── setup.ts                # Test database lifecycle (migrate, truncate)
     ├── utils.ts                # Test helper functions
+    ├── assignmentPolicy.test.ts # Immediate changes, supersession, EPQ lock races, BR-13
     ├── bootstrap.test.ts       # Bootstrap integration tests
     ├── boundary.test.ts        # Quota, bigint, idempotency, plan boundary tests
     ├── concurrency.test.ts     # Concurrent quota consumption, idempotency tests
+    ├── config.test.ts          # TRUST_PROXY and env validation tests
+    ├── dbConstraints.test.ts   # Direct-SQL proof of DB constraints (incl. composite FKs)
+    ├── hash.test.ts            # API key hashing / timing-safe comparison tests
+    ├── healthFailure.test.ts   # Health endpoint failure redaction
+    ├── httpAuth.test.ts        # HTTP auth + tenant isolation (real Express pipeline)
+    ├── httpRateLimit.test.ts   # HTTP 429 budget exhaustion (own file, isolated store)
+    ├── httpScenarios.test.ts   # End-to-end HTTP quota decisions, history, plan flow
+    ├── httpStatus.test.ts      # Status-code and error-mapping tests
+    ├── httpValidation.test.ts  # Schema-boundary validation incl. malformed JSON/413
+    ├── logger.test.ts          # Credential redaction in structured logs
     ├── quotaEvaluator.test.ts  # Pure function unit tests (no DB)
-    └── rollback.test.ts        # Transaction rollback, rate limiter tests
+    ├── rateLimiter.test.ts     # Two-layer limiter, fallback, fail-closed tests
+    └── rollback.test.ts        # Transaction rollback via real service + triggers
 ```
 
 ---
@@ -479,55 +600,72 @@ src/
 ## Security
 
 - **No Client-Trust**: Account ID derived from authenticated API key only
-- **Secret Handling**: API key secrets never logged; only prefix stored in plaintext
+- **Secret Handling**: API key secrets never logged; only prefix + SHA-256 hash stored; comparisons are timing-safe. In Docker, the bootstrap key file lives on the `bootstrap-secrets` volume owned by `node` with mode `0600` (directory `0700`), repaired on every start by the entrypoint before it drops privileges
+- **Log Redaction**: Pino redacts `authorization` / `x-api-key` / `cookie` fields anywhere in log objects
 - **Parameterized Queries**: Drizzle ORM prevents SQL injection
-- **Rate Limiting**: In-memory (single-instance); optional Redis-backed distributed limiting for multi-instance
-- **Request Size Limit**: 64KB body limit
+- **Rate Limiting**: Per-IP before authentication, per-API-key after (defaults: `RATE_LIMIT_MAX` = 100 requests per `RATE_LIMIT_WINDOW_MS` = 60s, applied independently to each layer); Redis-backed when `REDIS_URL` is set with in-process fallback; if both stores fail, requests are rejected `429` (fail-closed)
+- **Request Size Limit**: 64KB body limit; server `requestTimeout` 15s, `headersTimeout` 10s
+- **Database Bounds**: Pool `statement_timeout` 15s so runaway statements cannot pin connections
 - **CORS**: Not configured; API key authentication provides primary access control. Configure CORS in `app.ts` if browser-based clients are needed.
 - **HTTPS**: Terminates at reverse proxy in production (not included)
 - **Proxy Trust**: `TRUST_PROXY=true` only when behind a trusted reverse proxy; otherwise forwarded headers (e.g., `X-Forwarded-For`) could be spoofed by clients
-- **Input Validation**: Zod schemas at all boundaries
+- **Input Validation**: Zod schemas at all boundaries (including non-empty `userId`)
+- **Tenant Pairing at the DB**: Composite FKs prevent cross-account `(account_id, user_id)` rows even if application code is buggy
+
+---
+
+## Known Limitations & Deferred Findings
+
+Honest status of items that are deliberately not done:
+
+1. **Idempotency Key Retention**: Keys are unique per account indefinitely; no TTL/archival — the `usage_requests` table grows without bound. A retention job is out of scope for this milestone.
+2. **`int8` Type Parser (audit DB-08)**: PostgreSQL `BIGINT` values are coerced to native `bigint` at repository mapping boundaries (and via Drizzle `mode: "bigint"`) instead of installing a global `pg` type parser. A global parser would also affect health checks, migrations, and any future raw client usage; the localized approach is explicit and test-covered.
+3. **Single-Instance Rate Limiting**: Without `REDIS_URL`, per-IP/per-key counters are per-process; multi-instance deployments require Redis. Redis failure degrades to a bounded in-process store per instance (still enforced, not shared).
+4. **No Distributed Tracing / Metrics**: Structured logs with request IDs only; no OpenTelemetry or Prometheus.
+5. **Performance Baseline**: A dated measurement of the Compose stack exists ([`docs/performance/2026-10-18-compose.md`](docs/performance/2026-10-18-compose.md)) but is not re-run for every change; numbers describe a single development machine.
+6. **No Independent Security Audit**: The "Security" section describes implemented controls with tests; it is not a substitute for a professional assessment (see portfolio notice above).
+7. **`drizzle-orm` Advisory CVE-2026-39356 (GHSA-gpj5-g38j-94v9, high)**: Affects identifier-escaping (`sql.identifier()` / `.as()`) when untrusted input reaches identifier construction. This codebase builds identifiers only from static schema objects and internal constants (the only `sql.raw()` usage interpolates compile-time conflict-target strings; no `sql.identifier()` calls exist), which the advisory explicitly scopes out of impact. Upgrading `drizzle-orm` 0.33 → 0.45.x is a breaking-change maintenance item scheduled after this milestone, not silently ignored.
 
 ---
 
 ## Performance Baseline
 
-Load testing was performed with Autocannon against the local application using real PostgreSQL. Results are a local baseline for the recorded environment, not a universal production capacity guarantee.
+Load testing was performed with Autocannon against the Docker Compose stack (app + PostgreSQL 16 + Redis in containers) on a single development machine. Results are a local baseline for the recorded environment, not a universal production capacity guarantee.
 
-### Test Environment
+### Test Environment (2026-10-18)
 
-- Node.js: 22.x
-- PostgreSQL: 16 (local, Docker)
-- Application: Express + Drizzle ORM + Pessimistic locking
-- Rate limit: Disabled (RATE_LIMIT_MAX=10000000) for pure throughput measurement
+- Host: Linux x86_64, 12 CPU cores, 7.9 GB RAM
+- App: `node:22-alpine` in Docker Compose
+- PostgreSQL 16.15 and Redis 7 in Docker Compose
+- Rate limit raised to `RATE_LIMIT_MAX=10000000` for the measurement window only (default is 100 req/60s per layer)
+- Account-scoped authenticated `POST /usage`, `units=1`, unique idempotency key per request, pipelining 1
 
-### Baseline Results
+### Baseline Results (30s, 10 connections)
 
-| Connections | Duration | Req/s | p50 (ms) | p99 (ms) | Max (ms) | Errors |
-|-------------|----------|-------|----------|----------|----------|--------|
-| 10 | 10s | 116.20 | 67.00 | 362.00 | 684.00 | 0 |
-| 25 | 10s | 125.40 | 171.00 | 773.00 | 1474.00 | 0 |
+| Metric | Value |
+|--------|-------|
+| Requests/second (mean) | 120.40 |
+| Total requests | 3,622 |
+| p50 | 17 ms |
+| p75 | 27 ms |
+| p90 | 242 ms |
+| p97.5 | 378 ms |
+| p99 | 546 ms |
+| Max | 922 ms |
+| Mean | 82.23 ms (stddev 119.03 ms) |
+| Errors / timeouts / non-2xx | 0 / 0 / 0 |
 
-All tests used authenticated usage requests with unique idempotency keys per request. Throughput is limited by database writes (counter increment + usage_request insert) within a single transaction.
+> **Note on p95**: `autocannon`'s fixed histogram does not emit a p95 value (`result.latency.p95` is `undefined`), so the loader prints only the percentiles it actually measures (`p50`, `p75`, `p90`, `p97_5`, `p99`, `max`) and the reports never interpolate a fabricated p95.
 
-### Run Your Own Load Test
+After the run the database showed 3,622 accepted / 0 rejected requests and an account counter exactly equal to the accepted sum; the invariant verifier passed for the whole database. Throughput is limited by the per-request transaction (counter lock + decision-log insert + commit); with 10 connections at ~82 ms mean latency, the observed rate matches the latency-bound prediction (≈122 req/s).
 
-```bash
-# Bootstrap a test account
-export BOOTSTRAP_ACCOUNT_NAME=loadtest-account
-export BOOTSTRAP_API_KEY_NAME=loadtest-key
-npm run bootstrap:loadtest
-
-# Run load test (use the API key printed above)
-export LOADTEST_API_KEY=<your-key>
-npm run loadtest -- --duration 10 --connections 10 --pipelining 1 --units 1
-```
+Full method, database evidence, and reproduction steps: [`docs/performance/2026-10-18-compose.md`](docs/performance/2026-10-18-compose.md).
 
 ---
 
 ## License
 
-No license specified. All rights reserved.
+MIT — see [LICENSE](LICENSE).
 
 ---
 

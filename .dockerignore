@@ -1,0 +1,17 @@
+# Build context hygiene: keep the image small, reproducible, and free of
+# secrets/local state.
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+node_modules
+dist
+coverage
+*.log
+docker-compose*.yml
+docs
+README.md
+AGENTS.md
+.vscode
+.idea

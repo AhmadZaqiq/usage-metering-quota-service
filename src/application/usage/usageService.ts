@@ -1,10 +1,10 @@
 import { withTransaction } from "../../db/client.js";
 import { MAX_UNITS_PER_REQUEST_BIGINT } from "../../config/index.js";
-import { evaluateQuota, type RejectionReason } from "../../domain/quotaEvaluator.js";
+import { evaluateQuota, type RejectionReason, type LimitScope } from "../../domain/quotaEvaluator.js";
 import { upsertAndLockCounter, incrementCounter, type CounterRow } from "../../infrastructure/repositories/counterRepository.js";
 import { computeRequestHash, type RequestFingerprint } from "../../domain/idempotency.js";
 import { formatDateForDb, getUtcMonthStart } from "../../domain/date.js";
-import { NotFoundError, BusinessError, ConflictError, ValidationError } from "../../errors/AppError.js";
+import { NotFoundError, ConflictError, ValidationError } from "../../errors/AppError.js";
 import { findUsageRequestByKey, insertUsageRequest, type UsageRequestRow } from "../../infrastructure/repositories/usageRequestRepository.js";
 import { selectUserByAccountAndClientUserId } from "../../infrastructure/repositories/userRepository.js";
 import { selectCurrentAssignmentByAccount, selectCurrentAssignmentByUser, selectPlanByCriteria } from "../../infrastructure/repositories/assignmentRepository.js";
@@ -19,6 +19,8 @@ export interface UsageInput {
 export interface QuotaDecision {
   decision: "accepted" | "rejected";
   rejectionReason?: RejectionReason;
+  /** Only set when rejectionReason is `max_per_request_exceeded`. */
+  limitScope?: LimitScope;
   accountRemaining: bigint;
   userRemaining?: bigint;
   periodStart: string;
@@ -68,7 +70,10 @@ export async function processUsageRequest(
       if (record.requestHash !== requestHash) {
         throw new ConflictError("Idempotency key reused with different request data");
       }
-      // Return cached decision with original remaining quota
+      // Return cached decision with original remaining quota. `limitScope` is
+      // omitted here and on the conflict-replay path below: it is not persisted
+      // (no column), so a replay cannot recover it without re-evaluating quota,
+      // which would defeat the point of a stable cached result.
       return {
         decision: record.decision as "accepted" | "rejected",
         rejectionReason: record.rejectionReason as RejectionReason | undefined,
@@ -95,7 +100,15 @@ export async function processUsageRequest(
     const userPlanResult = userAssignment ? await selectPlanByCriteria(tx, userAssignment.planId) : null;
 
     if (!accountPlanResult) {
-      throw new BusinessError("No active account plan assigned");
+      // Missing plan configuration is a state conflict (409), not a client
+      // input error; failing closed also prevents consuming without policy.
+      throw new ConflictError("No active account plan assigned");
+    }
+
+    // Fail closed for user-scoped requests: a user without an effective user
+    // plan must not silently fall back to account-only quota (fail-open).
+    if (userId !== null && (!userAssignment || !userPlanResult)) {
+      throw new ConflictError("No active user plan assigned for user");
     }
 
     const accountPlanQuota = {
@@ -124,6 +137,7 @@ export async function processUsageRequest(
       return {
         decision: evaluation.decision,
         rejectionReason: evaluation.rejectionReason,
+        limitScope: evaluation.limitScope,
         accountRemaining: evaluation.accountRemaining,
         userRemaining: evaluation.userRemaining,
         periodStart,
@@ -162,7 +176,8 @@ export async function processUsageRequest(
         if (requestRecord.requestHash !== requestHash) {
           throw new ConflictError("Idempotency key reused with different request data");
         }
-        // Return cached decision with original remaining quota
+        // Return cached decision with original remaining quota. `limitScope`
+        // omitted (not persisted), same as the replay path above.
         return {
           decision: requestRecord.decision as "accepted" | "rejected",
           rejectionReason: requestRecord.rejectionReason as RejectionReason | undefined,
@@ -188,6 +203,7 @@ export async function processUsageRequest(
     return {
       decision: evaluation.decision,
       rejectionReason: evaluation.rejectionReason,
+      limitScope: evaluation.limitScope,
       accountRemaining: evaluation.accountRemaining,
       userRemaining: evaluation.userRemaining,
       periodStart,

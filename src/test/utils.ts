@@ -107,8 +107,12 @@ async function assignUserPlan(accountId: number, userId: string, planId: number)
   await createAssignment(accountId, { userId, planId, effectiveFrom }, accountId);
 }
 
-async function setupBasicTestContext() {
-  const account = await createTestAccount("Test Account");
+// Unique per invocation: uq_accounts_name requires live account names to be
+// unique, so two contexts in one test can never collide.
+let contextSeq = 0;
+
+export async function setupBasicTestContext() {
+  const account = await createTestAccount(`Test Account ${++contextSeq}`);
   const apiKey = await createTestApiKey(account.id, "Test Key");
 
   const accountPlan = await createTestPlan(account.id, "Account Plan", "account", 1000n, 100n);

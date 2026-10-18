@@ -1,4 +1,4 @@
-import { pgTable, bigserial, bigint, timestamp, date, uniqueIndex, index, check } from "drizzle-orm/pg-core";
+import { pgTable, bigserial, bigint, timestamp, date, uniqueIndex, check } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { accounts } from "./accounts.js";
 import { users } from "./users.js";
@@ -23,7 +23,8 @@ export const usageCounters = pgTable(
     accountPeriodUnique: uniqueIndex("uq_usage_counters_account_period").on(table.accountId, table.periodStart).where(sql`${table.userId} IS NULL`),
     // User-level: unique per account per user per period
     userPeriodUnique: uniqueIndex("uq_usage_counters_user_period").on(table.accountId, table.userId, table.periodStart).where(sql`${table.userId} IS NOT NULL`),
-    lookupIdx: index("idx_usage_counters_lookup").on(table.accountId, table.userId, table.periodStart),
+    // NOTE: idx_usage_counters_lookup was dropped as redundant with the two
+    // partial unique indexes above, which cover both access paths.
   })
 );
 

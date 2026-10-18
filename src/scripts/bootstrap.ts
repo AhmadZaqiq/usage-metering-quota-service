@@ -3,58 +3,89 @@ import {
   insertAccount,
 } from "../infrastructure/repositories/accountRepository.js";
 import {
-  selectPlanByAccountAndName,
+  selectSystemPlanByTypeAndName,
+  insertPlan,
 } from "../infrastructure/repositories/planRepository.js";
+import {
+  selectActiveApiKeyByName,
+} from "../infrastructure/repositories/apiKeyRepository.js";
 import {
   selectCurrentAssignmentByAccount,
 } from "../infrastructure/repositories/assignmentRepository.js";
-import { createApiKey } from "../application/auth/apiKeyService.js";
+import { createApiKey, revokeApiKey } from "../application/auth/apiKeyService.js";
 import { createAssignment } from "../application/plans/assignmentService.js";
-import { createPlan } from "../application/plans/planService.js";
-import { getEnv, MAX_UNITS_PER_REQUEST_BIGINT } from "../config/index.js";
+import { getEnv } from "../config/index.js";
 import { logger } from "../logging/logger.js";
 import { getUtcMonthStart } from "../domain/date.js";
 import * as fs from "fs";
 import { db } from "../db/client.js";
 
-const DEFAULT_PLAN_NAME = "Default Plan";
-const DEFAULT_MONTHLY_ALLOWANCE = 10_000n;
+// Predefined, account-owned plans available to every account. Seeded
+// idempotently on a fresh install so the read-only /plans catalog and default
+// assignment have real data instead of an empty system-plan set. Owner is
+// null, so planService treats them as read-only for every tenant.
+const SYSTEM_PLANS = [
+  { name: "Starter", type: "account", monthlyAllowance: 50_000n, maxUnitsPerRequest: 1_000n },
+  { name: "Pro", type: "account", monthlyAllowance: 500_000n, maxUnitsPerRequest: 5_000n },
+  { name: "Basic", type: "user", monthlyAllowance: 10_000n, maxUnitsPerRequest: 100n },
+  { name: "Premium", type: "user", monthlyAllowance: 100_000n, maxUnitsPerRequest: 1_000n },
+] as const;
 
-async function ensureDefaultPlan(accountId: bigint): Promise<number> {
-  const existing = await selectPlanByAccountAndName(db, accountId, DEFAULT_PLAN_NAME);
+async function ensureSystemPlans(): Promise<void> {
+  for (const plan of SYSTEM_PLANS) {
+    const existing = await selectSystemPlanByTypeAndName(db, plan.type, plan.name);
+    if (existing) continue;
 
-  if (existing) {
-    return Number(existing.id);
+    try {
+      await insertPlan(
+        db,
+        plan.name,
+        plan.type,
+        null,
+        plan.monthlyAllowance,
+        plan.maxUnitsPerRequest,
+      );
+      logger.info({ plan: plan.name, type: plan.type }, "Seeded system plan");
+    } catch (err) {
+      // uq_system_plans: a concurrent bootstrap inserted the same (type, name)
+      // first; the seeded catalog is identical either way.
+      const pgErr = err as { code?: string };
+      if (pgErr.code !== "23505") throw err;
+      logger.info({ plan: plan.name }, "System plan seeded concurrently; reusing");
+    }
   }
-
-  const plan = await createPlan(
-    {
-      name: DEFAULT_PLAN_NAME,
-      type: "account",
-      monthlyAllowance: DEFAULT_MONTHLY_ALLOWANCE,
-      maxUnitsPerRequest: MAX_UNITS_PER_REQUEST_BIGINT,
-    },
-    Number(accountId as unknown as number)
-  );
-
-  return plan.id;
 }
 
-async function ensureDefaultAssignment(accountId: bigint, planId: number): Promise<void> {
+// Default assignment for a fresh account: the predefined Starter system plan.
+// Existing accounts keep whatever they already have (ensureDefaultAssignment
+// no-ops when a current assignment exists). This replaces the old per-account
+// custom "Default Plan" so new accounts land on the shared catalog instead of
+// a private duplicate.
+async function ensureDefaultAssignment(accountId: bigint): Promise<void> {
   const current = await selectCurrentAssignmentByAccount(db, accountId);
 
   if (current) {
     return;
   }
 
+  const starter = await selectSystemPlanByTypeAndName(db, "account", "Starter");
+  if (!starter) {
+    throw new Error("Starter system plan missing; run system-plan seeding first");
+  }
+
   await createAssignment(Number(accountId as unknown as number), {
-    planId,
+    planId: Number(starter.id),
     effectiveFrom: getUtcMonthStart(),
   }, Number(accountId as unknown as number));
 }
 
 export async function bootstrap(): Promise<void> {
-  const env = getEnv();
+  getEnv();
+
+  // System-plan seeding runs unconditionally (even without the env vars) so a
+  // fresh install always has the predefined catalog regardless of whether an
+  // account is bootstrapped.
+  await ensureSystemPlans();
 
   const bootstrapAccountName = process.env.BOOTSTRAP_ACCOUNT_NAME;
   const bootstrapApiKeyName = process.env.BOOTSTRAP_API_KEY_NAME;
@@ -72,24 +103,81 @@ export async function bootstrap(): Promise<void> {
     accountId = existing.id;
     logger.info({ accountId: accountId.toString() }, "Bootstrap account already exists");
   } else {
-    const account = await insertAccount(db, bootstrapAccountName);
-    accountId = account.id;
-    logger.info({ accountId: accountId.toString() }, "Bootstrap account created");
+    try {
+      const account = await insertAccount(db, bootstrapAccountName);
+      accountId = account.id;
+      logger.info({ accountId: accountId.toString() }, "Bootstrap account created");
+    } catch (err) {
+      // uq_accounts_name: a concurrent bootstrap inserted the same name first.
+      const pgErr = err as { code?: string };
+      if (pgErr.code !== "23505") throw err;
+      const raced = await selectAccountByName(db, bootstrapAccountName);
+      if (!raced) throw err;
+      accountId = raced.id;
+      logger.info({ accountId: accountId.toString() }, "Bootstrap account created concurrently; reusing");
+    }
   }
 
-  const planId = await ensureDefaultPlan(accountId);
-  await ensureDefaultAssignment(accountId, planId);
+  await ensureDefaultAssignment(accountId);
 
-  const keyResult = await createApiKey(    Number(accountId as unknown as number), bootstrapApiKeyName);
+  const activeKey = await selectActiveApiKeyByName(db, accountId, bootstrapApiKeyName);
+  const secretsDir = "/run/secrets";
+  const secretPath = `${secretsDir}/api-key`;
+  const canPersistSecret = fs.existsSync(secretsDir);
+
+  if (activeKey) {
+    if (!canPersistSecret || fs.existsSync(secretPath)) {
+      // Key already provisioned: never mint a duplicate and never print a
+      // secret again. (Locally there is no secrets volume, so nothing to
+      // restore; the original secret is only where it was first written.)
+      logger.info(
+        { prefix: activeKey.prefix },
+        "Bootstrap API key already exists; not re-printing the secret",
+      );
+      return;
+    }
+    // The secrets volume lost the file but the key row survives: the stored
+    // hash cannot be reversed, so rotate to restore a usable secret file.
+    // Order matters: write the replacement BEFORE revoking the old key so a
+    // failed write can never strand the account with no usable key.
+    const rotated = await createApiKey(Number(accountId as unknown as number), bootstrapApiKeyName);
+    try {
+      fs.writeFileSync(secretPath, rotated.key, { mode: 0o600 });
+      fs.chmodSync(secretPath, 0o600);
+    } catch (err) {
+      // Write failed: keep the old key active (it is still the only usable
+      // credential). Revoke the just-minted replacement so we do not leave an
+      // extra active key we cannot show again, and fail loudly.
+      await revokeApiKey(Number(accountId as unknown as number), Number(rotated.id));
+      logger.error({ err }, "Failed to persist rotated bootstrap API key; old key kept active");
+      throw err;
+    }
+    await revokeApiKey(Number(accountId as unknown as number), Number(activeKey.id));
+    logger.info(
+      { oldPrefix: activeKey.prefix, newPrefix: rotated.prefix },
+      "Bootstrap API key file missing; rotated to a new key",
+    );
+    return;
+  }
+
+  const keyResult = await createApiKey(Number(accountId as unknown as number), bootstrapApiKeyName);
   logger.info({ prefix: keyResult.prefix }, "Bootstrap API key created");
 
   // Persist the bootstrapped key to the shared secrets volume so the client
-  // container can pick it up. Best-effort: skipped when /run/secrets is not
-  // available (e.g. local development), where the key is shown on stdout.
-  try {
-    fs.writeFileSync("/run/secrets/api-key", keyResult.key);
-  } catch {
-    // Secret file not writable in this environment; key is shown on stdout.
+  // container can pick it up. Skipped when /run/secrets is not available (e.g.
+  // local development), where the key is shown on stdout. A write failure here
+  // is non-fatal on first creation (the key is printed), but it is logged so
+  // it is never silent.
+  if (canPersistSecret) {
+    try {
+      fs.writeFileSync(secretPath, keyResult.key, { mode: 0o600 });
+      fs.chmodSync(secretPath, 0o600);
+    } catch (err) {
+      logger.error(
+        { err },
+        "Failed to persist bootstrap API key to secrets volume; key printed to stdout only",
+      );
+    }
   }
 
   console.log("\n=== BOOTSTRAP API KEY (save this - shown only once) ===");

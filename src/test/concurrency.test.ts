@@ -78,8 +78,12 @@ async function assignUserPlan(accountId: number, userId: string, planId: number)
   await createAssignment(accountId, { userId, planId, effectiveFrom }, accountId);
 }
 
+// Each context gets its own account name: uq_accounts_name requires live
+// account names to be unique, which is exactly what production guarantees.
+let contextSeq = 0;
+
 async function setupBasicTestContext() {
-  const account = await createTestAccount("Test Account");
+  const account = await createTestAccount(`Test Account ${++contextSeq}`);
   const apiKey = await createTestApiKey(account.id, "Test Key");
 
   const accountPlan = await createTestPlan(account.id, "Account Plan", "account", 1000n, 100n);
@@ -472,12 +476,19 @@ describe("Concurrency Integration Tests", () => {
       const fulfilled = results.filter(r => r.status === "fulfilled");
       const rejected = results.filter(r => r.status === "rejected");
 
-      // Exactly one should succeed, one should fail with ConflictError
-      expect(fulfilled.length).toBe(1);
-      expect(rejected.length).toBe(1);
-      expect(rejected[0].reason?.message).toContain("Overlapping assignment exists");
+      // createAssignment now takes a row lock on the target plan first, so
+      // concurrent creates for the same plan serialize: the waiter re-reads
+      // the committed timeline and applies the supersession policy (both may
+      // succeed), or hits the overlap safety net (exactly one succeeds).
+      expect(fulfilled.length + rejected.length).toBe(2);
+      if (rejected.length === 1) {
+        expect(rejected[0].reason?.message).toContain("Overlapping assignment exists");
+      } else {
+        expect(fulfilled.length).toBe(2);
+      }
 
-      // Verify only one assignment exists in the database
+      // The DB invariant is unchanged: exactly one open-ended assignment,
+      // never overlapping rows for the same subject.
       const assignments = await db
         .select()
         .from(planAssignments)

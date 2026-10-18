@@ -50,7 +50,7 @@ HTTP Request
 │  src/infrastructure/                                           │
 │  • repositories/   data access (Drizzle + raw SQL)           │
 │  • auth/           API key verification (repo + crypto)      │
-│  • rateLimiter.ts  in-memory + Redis rate limiting            │
+│  • rateLimiter.ts  Redis-backed rate limiting (memory fallback)            │
 └──────────────────────────┬──────────────────────────────────┘
                            │ calls
                            ▼
@@ -122,7 +122,7 @@ No circular dependencies are permitted.
 ### Infrastructure (`src/infrastructure/`)
 - **Repositories**: All Drizzle queries, raw SQL, locking, row mapping
 - **Auth infrastructure**: API key verification (hash + repository lookup)
-- **Rate limiting**: In-memory + Redis implementations behind a common interface
+- **Rate limiting**: Two layers (per-IP pre-auth, per-API-key post-auth) over a Redis store with in-process fallback and fail-closed behavior
 - **Must not**: Contain business workflow rules or HTTP handling
 
 ### Database (`src/db/`)
@@ -138,13 +138,16 @@ No circular dependencies are permitted.
 POST /usage
     │
     ▼
-Presentation: Rate Limiter middleware (per key prefix / IP)
+Presentation: IP rate limiter (pre-auth, keyed by client IP)
     │
     ▼
 Presentation: Auth Middleware
     │  ├─ Extract Bearer token
-    │  ├─ Verify API key (infrastructure: repo + hash)
+    │  ├─ Verify API key (infrastructure: repo + hash, timing-safe)
     │  └─ Attach req.account { id }, req.apiKeyId
+    ▼
+Presentation: Identity rate limiter (post-auth, keyed by API key id)
+    │
     ▼
 Presentation: Zod Validation (usageRequestSchema)
     │
@@ -158,6 +161,7 @@ Application: usageService.processUsageRequest()
     │  ├─ Upsert + lock account counter (repository: counterRepository)
     │  ├─ Upsert + lock user counter if applicable
     │  ├─ Resolve current plans (repository: assignmentRepository + planRepository)
+    │  ├─ Fail closed: missing account/user plan → ConflictError (409)
     │  ├─ quotaEvaluator.evaluateQuota() (domain: pure function)
     │  ├─ Insert usage_requests with final decision (repository: usageRequestRepository)
     │  ├─ If accepted: increment counters (repository: counterRepository)
@@ -174,19 +178,20 @@ Presentation: HTTP Response (200 accepted/rejected, 409 conflict, etc.)
 **Tables:**
 | Table | Key Constraints |
 |-------|-----------------|
-| `accounts` | PK `id`, soft delete `deleted_at` |
-| `users` | PK `id`, unique `(account_id, client_user_id)`, FK `account_id` |
-| `plans` | PK `id`, check `type IN ('account','user')`, partial unique indexes |
-| `plan_assignments` | PK `id`, partial unique current assignments, exclusion constraint, trigger |
-| `usage_counters` | PK `id`, unique `(account_id, user_id, period_start)`, `user_id=NULL` sentinel |
-| `usage_requests` | PK `id`, unique `(account_id, idempotency_key)`, hash + decision |
+| `accounts` | PK `id`, soft delete `deleted_at`, partial unique live `name` |
+| `users` | PK `id`, unique `(account_id, client_user_id)`, unique `(account_id, id)` (FK companion), FK `account_id` |
+| `plans` | PK `id`, check `type IN ('account','user')`, partial unique indexes ignoring soft-deleted rows |
+| `plan_assignments` | PK `id`, partial unique current assignments, two partial exclusion constraints, range CHECK, plan-type trigger, composite tenant FK |
+| `usage_counters` | PK `id`, partial unique per period (user NULL / not NULL), `CHECK (counter >= 0)`, composite tenant FK |
+| `usage_requests` | PK `id`, unique `(account_id, idempotency_key)`, hash + decision checks, composite tenant FK |
 | `api_keys` | PK `id`, unique `prefix`, hash, revocation flags |
 
 **Custom SQL Migrations (`src/db/sql/`):**
 - `btree_gist` extension
-- Check constraints (plan type, positive values, non-negative counters)
-- Partial unique indexes (system/custom plans, current assignments, counters)
-- Exclusion constraint on `plan_assignments` (no overlapping periods)
+- Check constraints (plan type, positive values, non-negative counters, `chk_assignment_range`)
+- Partial unique indexes (system/custom plans, current assignments, counters, live account names)
+- Two partial exclusion constraints on `plan_assignments` (`no_overlap_account_assignments`, `no_overlap_user_assignments`)
+- Composite tenant FKs `(account_id, user_id) → users(account_id, id)` on `usage_counters`, `usage_requests`, `plan_assignments`
 - Trigger for plan-type compatibility (account plan ↔ account assignment)
 
 ---
@@ -199,11 +204,13 @@ Presentation: HTTP Response (200 accepted/rejected, 409 conflict, etc.)
 | No quota over-consumption | `SELECT FOR UPDATE` on counters + atomic increment within transaction |
 | Idempotency | Unique constraint on `(account_id, idempotency_key)` + request hash comparison |
 | Plan-type match | PostgreSQL trigger on `plan_assignments` |
-| No overlapping assignments | Exclusion constraint on `tstzrange` |
-| User belongs to account | Composite FK `(account_id, user_id) → users(account_id, id)` |
-| Counters never negative | `CHECK (counter >= 0)` + atomic updates |
+| No overlapping assignments | Two partial exclusion constraints on `tstzrange` |
+| User belongs to account | Composite FK `(account_id, user_id) → users(account_id, id)` on usage_counters, usage_requests, plan_assignments |
+| Fail-closed plan requirements | `usageService` throws `ConflictError` (409) when an account/user plan is missing — no account-only fallback for user-scoped input |
+| Counters never negative | `CHECK (counter >= 0)` + atomic updates; evaluator clamps remaining at 0 when an allowance drops below usage |
 | Positive units | `CHECK (units > 0)` in DB + Zod validation |
 | Monthly UTC periods | Computed once per request via `domain/date.ts` |
+| Counters equal accepted usage | `src/scripts/verify-invariants.ts` cross-checks `usage_counters` against the `usage_requests` decision log (INV-1..INV-8) and exits non-zero on mismatch |
 
 ---
 
@@ -214,17 +221,22 @@ Presentation: HTTP Response (200 accepted/rejected, 409 conflict, etc.)
 | Concurrent same idempotency key | Unique constraint serializes; second sees existing record |
 | Concurrent different keys, last units | Counter lock serializes; exactly N accepted for N remaining |
 | Concurrent first counter creation | Atomic upsert creates once; both get locked row |
-| Deadlock | Retry with backoff (3×) on `40P01` / `40001` |
+| Deadlock | Retry with backoff (3×) on `40P01` / `40001`, logged per retry |
 | Month boundary crossing | Period computed once before transaction |
+| Assign vs plan delete/deactivate | Plan row locked `FOR UPDATE`; waiter re-checks `deleted_at`/`is_active` (EvalPlanQual) and fails instead of using a stale row |
+| Concurrent plan changes to the same subject | Subject assignment rows locked `FOR UPDATE` + exclusion constraints; a later change closes/supersedes earlier rows; exactly one open-ended current row survives |
+| Lock wait backdating `effectiveFrom` | Clock re-read after locks acquired before stamping (BR-13) |
+| Cross-account user pairing | Composite tenant FKs reject mismatched `(account_id, user_id)` (23503) |
 
 ---
 
 ## Known Limitations
 
-1. **Rate Limiter**: In-memory by default; Redis available for multi-instance (falls back to memory on connection failure)
+1. **Rate Limiter**: Redis-backed when `REDIS_URL` is configured, else in-process; if both stores fail at runtime the limiter fails **closed** (429). Counters are per-instance without Redis
 2. **Idempotency Key Retention**: Indefinite; no TTL or archival
 3. **No Distributed Tracing**: Single-instance observability only
 4. **Horizontal Scaling**: Single app instance; rate limiter state not shared without Redis
+5. **`int8` parsing (audit DB-08)**: BigInt coercion is localized to repository mapping boundaries instead of a global `pg` type parser (deferred, see README "Known Limitations & Deferred Findings")
 
 ---
 
@@ -238,8 +250,9 @@ Presentation: HTTP Response (200 accepted/rejected, 409 conflict, etc.)
 | `NULL` user_id for account counters | Avoids partial unique index ORM limitations; simpler upsert |
 | SHA-256 for API keys | High-entropy secrets don't need KDF; fast verification |
 | `READ COMMITTED` + explicit locks | Simpler than `SERIALIZABLE`; explicit locks are auditable |
-| Next-month plan changes | Prevents mid-month quota gaming; auditable |
+| Immediate plan-change timing | Plan switches apply to the next request; the current row is closed at the replacement's start (half-open chain) and pending rows are superseded. Counters are never reset; lowering an allowance below usage clamps remaining to 0. Rationale: matches the required client-facing contract and keeps one mental model for upgrades and downgrades |
 | Idempotency in `usage_requests` | No separate table; atomic with decision persistence |
+| Fail-closed plan checks (409) | Missing plan configuration must never silently relax quota policy |
 
 ---
 
