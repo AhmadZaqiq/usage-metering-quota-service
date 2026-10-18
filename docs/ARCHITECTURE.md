@@ -207,9 +207,10 @@ Presentation: HTTP Response (200 accepted/rejected, 409 conflict, etc.)
 | No overlapping assignments | Two partial exclusion constraints on `tstzrange` |
 | User belongs to account | Composite FK `(account_id, user_id) → users(account_id, id)` on usage_counters, usage_requests, plan_assignments |
 | Fail-closed plan requirements | `usageService` throws `ConflictError` (409) when an account/user plan is missing — no account-only fallback for user-scoped input |
-| Counters never negative | `CHECK (counter >= 0)` + atomic updates |
+| Counters never negative | `CHECK (counter >= 0)` + atomic updates; evaluator clamps remaining at 0 when an allowance drops below usage |
 | Positive units | `CHECK (units > 0)` in DB + Zod validation |
 | Monthly UTC periods | Computed once per request via `domain/date.ts` |
+| Counters equal accepted usage | `src/scripts/verify-invariants.ts` cross-checks `usage_counters` against the `usage_requests` decision log (INV-1..INV-8) and exits non-zero on mismatch |
 
 ---
 
@@ -223,7 +224,7 @@ Presentation: HTTP Response (200 accepted/rejected, 409 conflict, etc.)
 | Deadlock | Retry with backoff (3×) on `40P01` / `40001`, logged per retry |
 | Month boundary crossing | Period computed once before transaction |
 | Assign vs plan delete/deactivate | Plan row locked `FOR UPDATE`; waiter re-checks `deleted_at`/`is_active` (EvalPlanQual) and fails instead of using a stale row |
-| Upgrade/downgrade classification vs concurrent allowance change | Current plan row locked `FOR UPDATE` while comparing allowances (CON-04) |
+| Concurrent plan changes to the same subject | Subject assignment rows locked `FOR UPDATE` + exclusion constraints; a later change closes/supersedes earlier rows; exactly one open-ended current row survives |
 | Lock wait backdating `effectiveFrom` | Clock re-read after locks acquired before stamping (BR-13) |
 | Cross-account user pairing | Composite tenant FKs reject mismatched `(account_id, user_id)` (23503) |
 
@@ -249,7 +250,7 @@ Presentation: HTTP Response (200 accepted/rejected, 409 conflict, etc.)
 | `NULL` user_id for account counters | Avoids partial unique index ORM limitations; simpler upsert |
 | SHA-256 for API keys | High-entropy secrets don't need KDF; fast verification |
 | `READ COMMITTED` + explicit locks | Simpler than `SERIALIZABLE`; explicit locks are auditable |
-| Asymmetric plan-change timing | Upgrades immediate (user benefit), downgrades at next UTC month (prevents mid-month quota gaming); supersession keeps at most one pending downgrade per subject |
+| Immediate plan-change timing | Plan switches apply to the next request; the current row is closed at the replacement's start (half-open chain) and pending rows are superseded. Counters are never reset; lowering an allowance below usage clamps remaining to 0. Rationale: matches the required client-facing contract and keeps one mental model for upgrades and downgrades |
 | Idempotency in `usage_requests` | No separate table; atomic with decision persistence |
 | Fail-closed plan checks (409) | Missing plan configuration must never silently relax quota policy |
 
