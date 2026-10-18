@@ -19,8 +19,8 @@ function mapRowToPlanAssignmentRow(row: Record<string, unknown>): PlanAssignment
     accountId: row.accountId as bigint,
     userId: row.userId as bigint | null,
     planId: row.planId as bigint,
-    effectiveFrom: row.effectiveFrom as Date,
-    effectiveTo: row.effectiveTo as Date | null,
+    effectiveFrom: new Date(row.effectiveFrom as string | Date),
+    effectiveTo: row.effectiveTo ? new Date(row.effectiveTo as string | Date) : null,
     createdAt: row.createdAt as Date,
   };
 }
@@ -65,6 +65,35 @@ export async function selectPlanByCriteria(
     .from(plans)
     .where(and(eq(plans.id, planId), eq(plans.isActive, true), isNull(plans.deletedAt)))
     .limit(1)
+    .execute();
+
+  if (result.length === 0) return null;
+
+  const plan = result[0];
+  return {
+    id: plan.id,
+    name: plan.name,
+    type: plan.type,
+    ownerAccountId: plan.ownerAccountId,
+    monthlyAllowance: plan.monthlyAllowance,
+    maxUnitsPerRequest: plan.maxUnitsPerRequest,
+  };
+}
+
+// Locks the plan row under READ COMMITTED. Active/not-deleted predicates are
+// part of the WHERE clause so PostgreSQL re-evaluates them after a concurrent
+// updater commits (EvalPlanQual). Callers must not assume a plan locked here
+// stays assignable without this re-check.
+export async function selectPlanByCriteriaForUpdate(
+  tx: Transaction,
+  planId: bigint,
+): Promise<PlanQuotaRow | null> {
+  const result = await tx
+    .select()
+    .from(plans)
+    .where(and(eq(plans.id, planId), eq(plans.isActive, true), isNull(plans.deletedAt)))
+    .limit(1)
+    .for("update")
     .execute();
 
   if (result.length === 0) return null;
@@ -175,6 +204,69 @@ export async function selectCurrentAssignmentByUserForUpdate(
   return mapRowToPlanAssignmentRow(result.rows[0]);
 }
 
+export async function selectPendingAssignmentsByAccountForUpdate(
+  tx: Transaction,
+  accountId: bigint,
+  at: Date = new Date(),
+): Promise<PlanAssignmentRow[]> {
+  const result = await tx.execute(sql`
+    SELECT id as "id", account_id as "accountId", user_id as "userId", plan_id as "planId",
+           effective_from as "effectiveFrom", effective_to as "effectiveTo", created_at as "createdAt"
+    FROM plan_assignments
+    WHERE account_id = ${accountId} AND user_id IS NULL
+      AND effective_from > ${at}
+      AND effective_to IS NULL
+    ORDER BY effective_from ASC
+    FOR UPDATE
+  `);
+
+  return result.rows.map(mapRowToPlanAssignmentRow);
+}
+
+export async function selectPendingAssignmentsByUserForUpdate(
+  tx: Transaction,
+  userId: bigint,
+  at: Date = new Date(),
+): Promise<PlanAssignmentRow[]> {
+  const result = await tx.execute(sql`
+    SELECT id as "id", account_id as "accountId", user_id as "userId", plan_id as "planId",
+           effective_from as "effectiveFrom", effective_to as "effectiveTo", created_at as "createdAt"
+    FROM plan_assignments
+    WHERE user_id = ${userId}
+      AND effective_from > ${at}
+      AND effective_to IS NULL
+    ORDER BY effective_from ASC
+    FOR UPDATE
+  `);
+
+  return result.rows.map(mapRowToPlanAssignmentRow);
+}
+
+export async function selectPlanAssignmentUsage(
+  tx: Transaction,
+  planId: bigint,
+): Promise<{ currentCount: number; pendingCount: number }> {
+  const result = await tx.execute(sql`
+    SELECT
+      COUNT(*) FILTER (
+        WHERE effective_from <= now()
+          AND (effective_to IS NULL OR effective_to > now())
+      ) AS "currentCount",
+      COUNT(*) FILTER (
+        WHERE effective_from > now()
+          AND effective_to IS NULL
+      ) AS "pendingCount"
+    FROM plan_assignments
+    WHERE plan_id = ${planId}
+  `);
+
+  const row = result.rows[0] as { currentCount: string | number; pendingCount: string | number };
+  return {
+    currentCount: Number(row.currentCount),
+    pendingCount: Number(row.pendingCount),
+  };
+}
+
 export async function selectOverlappingAssignmentsByAccount(
   tx: Transaction,
   accountId: bigint,
@@ -189,7 +281,10 @@ export async function selectOverlappingAssignmentsByAccount(
         isNull(planAssignments.userId),
         or(
           isNull(planAssignments.effectiveTo),
-          gt(planAssignments.effectiveTo, effectiveFrom),
+          and(
+            gt(planAssignments.effectiveTo, planAssignments.effectiveFrom),
+            gt(planAssignments.effectiveTo, effectiveFrom),
+          ),
         ),
       ),
     )
@@ -208,7 +303,10 @@ export async function selectOverlappingAssignmentsByAccountForUpdate(
     SELECT id, account_id, user_id, plan_id, effective_from, effective_to, created_at
     FROM plan_assignments
     WHERE account_id = ${accountId} AND user_id IS NULL
-      AND (effective_to IS NULL OR effective_to > ${effectiveFrom})
+      AND (
+        effective_to IS NULL
+        OR (effective_to > effective_from AND effective_to > ${effectiveFrom})
+      )
     LIMIT 1
     FOR UPDATE
   `);
@@ -229,7 +327,10 @@ export async function selectOverlappingAssignmentsByUser(
         eq(planAssignments.userId, userId),
         or(
           isNull(planAssignments.effectiveTo),
-          gt(planAssignments.effectiveTo, effectiveFrom),
+          and(
+            gt(planAssignments.effectiveTo, planAssignments.effectiveFrom),
+            gt(planAssignments.effectiveTo, effectiveFrom),
+          ),
         ),
       ),
     )
@@ -248,7 +349,10 @@ export async function selectOverlappingAssignmentsByUserForUpdate(
     SELECT id, account_id, user_id, plan_id, effective_from, effective_to, created_at
     FROM plan_assignments
     WHERE user_id = ${userId}
-      AND (effective_to IS NULL OR effective_to > ${effectiveFrom})
+      AND (
+        effective_to IS NULL
+        OR (effective_to > effective_from AND effective_to > ${effectiveFrom})
+      )
     LIMIT 1
     FOR UPDATE
   `);

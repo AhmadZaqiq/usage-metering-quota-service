@@ -1,12 +1,14 @@
-import { db, withTransaction } from "../../db/client.js";
+import { db, withTransaction, type Transaction } from "../../db/client.js";
 import {
   insertPlan,
   selectPlans,
   selectPlanById,
+  selectPlanByIdForUpdate,
   updatePlan as updatePlanRow,
   softDeletePlan,
 } from "../../infrastructure/repositories/planRepository.js";
-import { NotFoundError, AuthorizationError, ValidationError } from "../../errors/AppError.js";
+import { selectPlanAssignmentUsage } from "../../infrastructure/repositories/assignmentRepository.js";
+import { NotFoundError, AuthorizationError, ValidationError, ConflictError } from "../../errors/AppError.js";
 import { MAX_UNITS_PER_REQUEST_BIGINT } from "../../config/index.js";
 
 export interface PlanInfo {
@@ -82,6 +84,14 @@ export interface UpdatePlanInput {
   isActive?: boolean;
 }
 
+async function assertPlanNotAssigned(tx: Transaction, planId: bigint): Promise<void> {
+  const usage = await selectPlanAssignmentUsage(tx, planId);
+
+  if (usage.currentCount > 0 || usage.pendingCount > 0) {
+    throw new ConflictError("Plan is assigned and cannot be deleted or deactivated");
+  }
+}
+
 export async function updatePlan(
   planId: number,
   input: UpdatePlanInput,
@@ -113,6 +123,19 @@ export async function updatePlan(
       }
     }
 
+    // Deactivating a plan that is still current or pending would leave usage
+    // resolution without an effective plan. Require reassignment first.
+    // Lock the plan row so a concurrent createAssignment cannot insert after
+    // the not-assigned check. Under READ COMMITTED, a concurrent soft-delete
+    // that commits while we wait makes selectPlanByIdForUpdate return null.
+    if (input.isActive === false && plan.isActive) {
+      const lockedPlan = await selectPlanByIdForUpdate(tx, BigInt(planId), BigInt(requestingAccountId));
+      if (!lockedPlan) {
+        throw new NotFoundError("Plan not found");
+      }
+      await assertPlanNotAssigned(tx, BigInt(planId));
+    }
+
     const updates: Record<string, unknown> = {};
     if (input.name !== undefined) updates.name = input.name;
     if (input.monthlyAllowance !== undefined) updates.monthlyAllowance = input.monthlyAllowance;
@@ -128,7 +151,11 @@ export async function updatePlan(
 
 export async function deletePlan(planId: number, requestingAccountId: number): Promise<void> {
   return await withTransaction(async (tx) => {
-    const plan = await selectPlanById(tx, BigInt(planId), BigInt(requestingAccountId));
+    // Lock before the not-assigned check so concurrent createAssignment for
+    // this plan cannot commit an assignment that we miss. If a concurrent
+    // soft-delete already committed, the locked select re-evaluates and
+    // returns null (READ COMMITTED).
+    const plan = await selectPlanByIdForUpdate(tx, BigInt(planId), BigInt(requestingAccountId));
 
     if (!plan) {
       throw new NotFoundError("Plan not found");
@@ -140,6 +167,8 @@ export async function deletePlan(planId: number, requestingAccountId: number): P
     if (!plan.ownerAccountId) {
       throw new AuthorizationError("Cannot delete system plan");
     }
+
+    await assertPlanNotAssigned(tx, BigInt(planId));
 
     await softDeletePlan(tx, BigInt(planId));
   });

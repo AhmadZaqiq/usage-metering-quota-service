@@ -165,7 +165,7 @@ API key format: `<prefix>.<secret>` (prefix stored plain, secret hashed with SHA
 | `GET` | `/plans` | Yes | List plans (system + own custom) |
 | `GET` | `/plans/:id` | Yes | Get plan details |
 | `PATCH` | `/plans/:id` | Yes | Update own custom plan |
-| `DELETE` | `/plans/:id` | Yes | Soft delete own custom plan |
+| `DELETE` | `/plans/:id` | Yes | Soft delete own custom plan (409 if currently or pending assigned) |
 
 #### Assignments
 | Method | Path | Auth | Description |
@@ -173,6 +173,15 @@ API key format: `<prefix>.<secret>` (prefix stored plain, secret hashed with SHA
 | `POST` | `/assignments` | Yes | Assign plan to account/user |
 | `GET` | `/assignments` | Yes | List all assignments (current + history) |
 | `GET` | `/assignments/current` | Yes | Get current assignments |
+
+##### Assignment timing
+
+- **Upgrade** (higher `monthlyAllowance` than the currently effective plan): takes effect **immediately**.
+- **Downgrade** (lower `monthlyAllowance`): takes effect at the **next UTC month start**.
+- There is **at most one pending downgrade** per subject (account or user). A new upgrade supersedes any pending downgrade; a newer downgrade replaces the previous pending one.
+- Usage counters are **never reset** by a plan change. Remaining quota uses the effective plan's allowance minus usage already consumed in the current UTC month.
+- `effectiveFrom` is optional. It is honored only for the **first** assignment to a subject (no current assignment). When a current assignment exists, upgrades start now and downgrades start at the next UTC month regardless of the client-provided value.
+- Soft-deleting or deactivating a plan that is current or pending for any subject returns **409 Conflict**. Reassign first.
 
 #### Users
 | Method | Path | Auth | Description |

@@ -801,9 +801,10 @@ describe("Boundary Integration Tests", () => {
         account.id
       );
 
-      // Upgrade takes effect immediately
+      // Upgrade takes effect immediately (client effectiveFrom ignored when
+      // a current assignment exists)
       expect(assignment.isCurrent).toBe(true);
-      expect(assignment.effectiveFrom).toBe(formatDateForDb(getUtcMonthStart()));
+      expect(assignment.planId).toBe(upgradedPlan.id);
 
       // Current assignments return the new plan right away
       const current = await getCurrentAssignments(account.id);
@@ -944,12 +945,11 @@ describe("Boundary Integration Tests", () => {
         account.id
       );
 
-      // The new assignment is effective at next month start, not immediately
+      // The new assignment is effective at next month start, not immediately.
+      // isCurrent is time-aware: not yet effective, so false.
       const nextMonthStart = getNextUtcMonthStart(new Date());
       expect(assignment.effectiveFrom).toBe(formatDateForDb(nextMonthStart));
-      // The new assignment has no end date (effectiveTo = null), so isCurrent is true,
-      // but it is not yet the effective plan (its effectiveFrom is in the future).
-      expect(assignment.isCurrent).toBe(true);
+      expect(assignment.isCurrent).toBe(false);
 
       // Current assignments still return the old plan (downgrade not yet effective)
       const current = await getCurrentAssignments(account.id);
@@ -998,9 +998,8 @@ describe("Boundary Integration Tests", () => {
         account.id
       );
 
-      // The new assignment has no end date (effectiveTo = null), so isCurrent is true,
-      // but it is not yet the effective plan (its effectiveFrom is in the future).
-      expect(assignment.isCurrent).toBe(true);
+      // Pending downgrade is not yet effective: isCurrent is time-aware (false)
+      expect(assignment.isCurrent).toBe(false);
 
       // Current assignments still return the old user plan
       const current = await getCurrentAssignments(account.id);

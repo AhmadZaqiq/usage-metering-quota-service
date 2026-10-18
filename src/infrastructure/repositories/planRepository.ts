@@ -93,6 +93,33 @@ export async function selectPlanById(
   return mapRowToPlanRow(result[0]);
 }
 
+// Locks the plan row under READ COMMITTED. The not-deleted predicate is part
+// of the WHERE clause so a concurrent soft-delete is re-evaluated after FOR
+// UPDATE waits (EvalPlanQual). Returns null if the plan was deleted while
+// waiting, so callers cannot proceed on a stale row.
+export async function selectPlanByIdForUpdate(
+  tx: Transaction,
+  planId: bigint,
+  accountId: bigint,
+): Promise<PlanRow | null> {
+  const result = await tx
+    .select()
+    .from(plans)
+    .where(
+      and(
+        eq(plans.id, planId),
+        or(isNull(plans.ownerAccountId), eq(plans.ownerAccountId, accountId)),
+        isNull(plans.deletedAt),
+      ),
+    )
+    .limit(1)
+    .for("update")
+    .execute();
+
+  if (result.length === 0) return null;
+  return mapRowToPlanRow(result[0]);
+}
+
 export async function selectPlanByAccountAndName(
   tx: Transaction,
   accountId: bigint,
