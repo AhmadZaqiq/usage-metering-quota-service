@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { Transaction } from "../../db/client.js";
-import { and, eq, isNull, or, gte } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, lte, or } from "drizzle-orm";
 import { planAssignments, plans, users } from "../../db/schema/index.js";
 
 export interface PlanAssignmentRow {
@@ -83,6 +83,7 @@ export async function selectPlanByCriteria(
 export async function selectCurrentAssignmentByAccount(
   tx: Transaction,
   accountId: bigint,
+  at: Date = new Date(),
 ): Promise<PlanAssignmentRow | null> {
   const result = await tx
     .select()
@@ -91,9 +92,14 @@ export async function selectCurrentAssignmentByAccount(
       and(
         eq(planAssignments.accountId, accountId),
         isNull(planAssignments.userId),
-        isNull(planAssignments.effectiveTo),
+        lte(planAssignments.effectiveFrom, at),
+        or(
+          isNull(planAssignments.effectiveTo),
+          gt(planAssignments.effectiveTo, at),
+        ),
       ),
     )
+    .orderBy(desc(planAssignments.effectiveFrom))
     .limit(1)
     .execute();
 
@@ -104,11 +110,16 @@ export async function selectCurrentAssignmentByAccount(
 export async function selectCurrentAssignmentByAccountForUpdate(
   tx: Transaction,
   accountId: bigint,
+  at: Date = new Date(),
 ): Promise<PlanAssignmentRow | null> {
   const result = await tx.execute(sql`
-    SELECT id, account_id, user_id, plan_id, effective_from, effective_to, created_at
+    SELECT id as "id", account_id as "accountId", user_id as "userId", plan_id as "planId",
+           effective_from as "effectiveFrom", effective_to as "effectiveTo", created_at as "createdAt"
     FROM plan_assignments
-    WHERE account_id = ${accountId} AND user_id IS NULL AND effective_to IS NULL
+    WHERE account_id = ${accountId} AND user_id IS NULL
+      AND effective_from <= ${at}
+      AND (effective_to IS NULL OR effective_to > ${at})
+    ORDER BY effective_from DESC
     LIMIT 1
     FOR UPDATE
   `);
@@ -120,11 +131,22 @@ export async function selectCurrentAssignmentByAccountForUpdate(
 export async function selectCurrentAssignmentByUser(
   tx: Transaction,
   userId: bigint,
+  at: Date = new Date(),
 ): Promise<PlanAssignmentRow | null> {
   const result = await tx
     .select()
     .from(planAssignments)
-    .where(and(eq(planAssignments.userId, userId), isNull(planAssignments.effectiveTo)))
+    .where(
+      and(
+        eq(planAssignments.userId, userId),
+        lte(planAssignments.effectiveFrom, at),
+        or(
+          isNull(planAssignments.effectiveTo),
+          gt(planAssignments.effectiveTo, at),
+        ),
+      ),
+    )
+    .orderBy(desc(planAssignments.effectiveFrom))
     .limit(1)
     .execute();
 
@@ -135,11 +157,16 @@ export async function selectCurrentAssignmentByUser(
 export async function selectCurrentAssignmentByUserForUpdate(
   tx: Transaction,
   userId: bigint,
+  at: Date = new Date(),
 ): Promise<PlanAssignmentRow | null> {
   const result = await tx.execute(sql`
-    SELECT id, account_id, user_id, plan_id, effective_from, effective_to, created_at
+    SELECT id as "id", account_id as "accountId", user_id as "userId", plan_id as "planId",
+           effective_from as "effectiveFrom", effective_to as "effectiveTo", created_at as "createdAt"
     FROM plan_assignments
-    WHERE user_id = ${userId} AND effective_to IS NULL
+    WHERE user_id = ${userId}
+      AND effective_from <= ${at}
+      AND (effective_to IS NULL OR effective_to > ${at})
+    ORDER BY effective_from DESC
     LIMIT 1
     FOR UPDATE
   `);
@@ -162,7 +189,7 @@ export async function selectOverlappingAssignmentsByAccount(
         isNull(planAssignments.userId),
         or(
           isNull(planAssignments.effectiveTo),
-          gte(planAssignments.effectiveTo, effectiveFrom),
+          gt(planAssignments.effectiveTo, effectiveFrom),
         ),
       ),
     )
@@ -181,7 +208,7 @@ export async function selectOverlappingAssignmentsByAccountForUpdate(
     SELECT id, account_id, user_id, plan_id, effective_from, effective_to, created_at
     FROM plan_assignments
     WHERE account_id = ${accountId} AND user_id IS NULL
-      AND (effective_to IS NULL OR effective_to >= ${effectiveFrom})
+      AND (effective_to IS NULL OR effective_to > ${effectiveFrom})
     LIMIT 1
     FOR UPDATE
   `);
@@ -202,7 +229,7 @@ export async function selectOverlappingAssignmentsByUser(
         eq(planAssignments.userId, userId),
         or(
           isNull(planAssignments.effectiveTo),
-          gte(planAssignments.effectiveTo, effectiveFrom),
+          gt(planAssignments.effectiveTo, effectiveFrom),
         ),
       ),
     )
@@ -221,7 +248,7 @@ export async function selectOverlappingAssignmentsByUserForUpdate(
     SELECT id, account_id, user_id, plan_id, effective_from, effective_to, created_at
     FROM plan_assignments
     WHERE user_id = ${userId}
-      AND (effective_to IS NULL OR effective_to >= ${effectiveFrom})
+      AND (effective_to IS NULL OR effective_to > ${effectiveFrom})
     LIMIT 1
     FOR UPDATE
   `);
@@ -284,19 +311,21 @@ export interface AssignmentWithPlanRow {
   createdAt: Date;
   planName: string;
   planType: string;
+  isCurrent: boolean;
 }
 
 function mapRowToAssignmentWithPlan(row: Record<string, unknown>): AssignmentWithPlanRow {
   return {
-    id: row.id as bigint,
-    accountId: row.accountId as bigint,
-    userId: row.userId as bigint | null,
-    planId: row.planId as bigint,
-    effectiveFrom: row.effectiveFrom as Date,
-    effectiveTo: row.effectiveTo as Date | null,
-    createdAt: row.createdAt as Date,
+    id: BigInt(row.id as string),
+    accountId: BigInt(row.accountId as string),
+    userId: row.userId ? BigInt(row.userId as string) : null,
+    planId: BigInt(row.planId as string),
+    effectiveFrom: new Date(row.effectiveFrom as string),
+    effectiveTo: row.effectiveTo ? new Date(row.effectiveTo as string) : null,
+    createdAt: new Date(row.createdAt as string),
     planName: row.planName as string,
     planType: row.planType as string,
+    isCurrent: row.isCurrent as boolean,
   };
 }
 
@@ -305,9 +334,13 @@ export async function listAssignmentsWithPlan(
   accountId: bigint,
 ): Promise<AssignmentWithPlanRow[]> {
   const result = await tx.execute(sql`
-    SELECT plan_assignments.id, plan_assignments.account_id, plan_assignments.user_id,
-           plan_assignments.plan_id, plan_assignments.effective_from, plan_assignments.effective_to,
-           plan_assignments.created_at, plans.name as plan_name, plans.type as plan_type
+    SELECT plan_assignments.id as "id", plan_assignments.account_id as "accountId",
+           plan_assignments.user_id as "userId", plan_assignments.plan_id as "planId",
+           plan_assignments.effective_from as "effectiveFrom",
+           plan_assignments.effective_to as "effectiveTo",
+           plan_assignments.created_at as "createdAt",
+           plans.name as "planName", plans.type as "planType",
+           (plan_assignments.effective_from <= now() AND (plan_assignments.effective_to IS NULL OR plan_assignments.effective_to > now())) as "isCurrent"
     FROM plan_assignments
     INNER JOIN plans ON plan_assignments.plan_id = plans.id
     WHERE plan_assignments.account_id = ${accountId}
@@ -319,14 +352,22 @@ export async function listAssignmentsWithPlan(
 export async function getCurrentAssignmentsWithPlan(
   tx: Transaction,
   accountId: bigint,
+  at: Date = new Date(),
 ): Promise<AssignmentWithPlanRow[]> {
   const result = await tx.execute(sql`
-    SELECT plan_assignments.id, plan_assignments.account_id, plan_assignments.user_id,
-           plan_assignments.plan_id, plan_assignments.effective_from, plan_assignments.effective_to,
-           plan_assignments.created_at, plans.name as plan_name, plans.type as plan_type
+    SELECT plan_assignments.id as "id", plan_assignments.account_id as "accountId",
+           plan_assignments.user_id as "userId", plan_assignments.plan_id as "planId",
+           plan_assignments.effective_from as "effectiveFrom",
+           plan_assignments.effective_to as "effectiveTo",
+           plan_assignments.created_at as "createdAt",
+           plans.name as "planName", plans.type as "planType",
+           (plan_assignments.effective_from <= ${at} AND (plan_assignments.effective_to IS NULL OR plan_assignments.effective_to > ${at})) as "isCurrent"
     FROM plan_assignments
     INNER JOIN plans ON plan_assignments.plan_id = plans.id
-    WHERE plan_assignments.account_id = ${accountId} AND plan_assignments.effective_to IS NULL
+    WHERE plan_assignments.account_id = ${accountId}
+      AND plan_assignments.effective_from <= ${at}
+      AND (plan_assignments.effective_to IS NULL OR plan_assignments.effective_to > ${at})
+    ORDER BY plan_assignments.effective_from DESC
   `);
 
   return result.rows.map(mapRowToAssignmentWithPlan);

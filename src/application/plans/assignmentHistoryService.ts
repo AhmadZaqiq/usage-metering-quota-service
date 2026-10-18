@@ -23,7 +23,7 @@ export async function getCurrentAssignments(accountId: number): Promise<{
   };
 }
 
-function mapAssignmentWithPlan(r: { id: bigint; accountId: bigint; userId: bigint | null; planId: bigint; effectiveFrom: Date; effectiveTo: Date | null; createdAt: Date; planName: string; planType: string }): AssignmentInfo {
+function mapAssignmentWithPlan(r: { id: bigint; accountId: bigint; userId: bigint | null; planId: bigint; effectiveFrom: Date; effectiveTo: Date | null; createdAt: Date; planName: string; planType: string; isCurrent: boolean }): AssignmentInfo {
   return {
     id: Number(r.id),
     accountId: Number(r.accountId),
@@ -34,6 +34,6 @@ function mapAssignmentWithPlan(r: { id: bigint; accountId: bigint; userId: bigin
     effectiveFrom: formatDateForDb(r.effectiveFrom),
     effectiveTo: r.effectiveTo ? formatDateForDb(r.effectiveTo) : null,
     createdAt: r.createdAt,
-    isCurrent: r.effectiveTo === null,
+    isCurrent: r.isCurrent,
   };
 }

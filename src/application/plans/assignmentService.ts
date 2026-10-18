@@ -93,34 +93,79 @@ async function createAssignmentImpl(
   const effectiveFrom = input.effectiveFrom ?? new Date();
   const effectiveFromDate = new Date(effectiveFrom);
 
-  const nextMonthStart = getNextUtcMonthStart(effectiveFromDate);
+  const now = new Date();
+  const nextMonthStart = getNextUtcMonthStart(now);
   const nextMonthStartDate = new Date(nextMonthStart);
 
-  // First, end any current assignment for the same subject (account or user)
-  // This must be done BEFORE checking for overlaps, so the old assignment doesn't appear as overlapping
+  // Determine whether this is an upgrade or downgrade by comparing the new
+  // plan's monthly allowance against the currently effective plan's allowance.
+  // Upgrades take effect immediately; downgrades take effect at the next UTC
+  // month start so the current period keeps its existing allowance.
+  let isDowngrade = false;
+
   if (isAccountLevel) {
-    const current = await selectCurrentAssignmentByAccountForUpdate(tx, BigInt(accountId));
+    const current = await selectCurrentAssignmentByAccountForUpdate(
+      tx,
+      BigInt(accountId),
+      now,
+    );
 
     if (current) {
-      await updateAssignmentEffectiveTo(tx, current.id, nextMonthStartDate);
+      const currentPlan = await selectPlanByCriteria(tx, current.planId);
+
+      if (currentPlan && plan.monthlyAllowance < currentPlan.monthlyAllowance) {
+        isDowngrade = true;
+      }
+
+      // End the current assignment:
+      // - Downgrade: it stays effective until the next UTC month start.
+      // - Upgrade / same tier: it ends when the new assignment starts.
+      await updateAssignmentEffectiveTo(
+        tx,
+        current.id,
+        isDowngrade ? nextMonthStartDate : effectiveFromDate,
+      );
     }
   } else {
-    const current = await selectCurrentAssignmentByUserForUpdate(tx, userId!);
+    const current = await selectCurrentAssignmentByUserForUpdate(tx, userId!, now);
 
     if (current) {
-      await updateAssignmentEffectiveTo(tx, current.id, nextMonthStartDate);
+      const currentPlan = await selectPlanByCriteria(tx, current.planId);
+
+      if (currentPlan && plan.monthlyAllowance < currentPlan.monthlyAllowance) {
+        isDowngrade = true;
+      }
+
+      await updateAssignmentEffectiveTo(
+        tx,
+        current.id,
+        isDowngrade ? nextMonthStartDate : effectiveFromDate,
+      );
     }
   }
 
+  // A downgrade is always scheduled for the next UTC month start, regardless
+  // of any client-provided effectiveFrom. An upgrade starts immediately (or at
+  // the client-provided effectiveFrom).
+  const assignmentEffectiveFrom = isDowngrade ? nextMonthStartDate : effectiveFromDate;
+
   // Now check for overlaps with OTHER assignments (not the one we just ended)
   if (isAccountLevel) {
-    const existing = await selectOverlappingAssignmentsByAccountForUpdate(tx, BigInt(accountId), effectiveFromDate);
+    const existing = await selectOverlappingAssignmentsByAccountForUpdate(
+      tx,
+      BigInt(accountId),
+      assignmentEffectiveFrom,
+    );
 
     if (existing.length > 0) {
       throw new ConflictError("Overlapping account-level assignment exists");
     }
   } else {
-    const existing = await selectOverlappingAssignmentsByUserForUpdate(tx, userId!, effectiveFromDate);
+    const existing = await selectOverlappingAssignmentsByUserForUpdate(
+      tx,
+      userId!,
+      assignmentEffectiveFrom,
+    );
 
     if (existing.length > 0) {
       throw new ConflictError("Overlapping user-level assignment exists");
@@ -134,7 +179,7 @@ async function createAssignmentImpl(
     BigInt(accountId),
     userId,
     BigInt(input.planId),
-    effectiveFromDate,
+    assignmentEffectiveFrom,
     finalEffectiveTo,
   );
 

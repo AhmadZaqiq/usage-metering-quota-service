@@ -7,8 +7,10 @@ import { createPlan, listPlans, getPlan, updatePlan, deletePlan } from "../appli
 import { createAssignment } from "../application/plans/assignmentService.js";
 import { processUsageRequest } from "../application/usage/usageService.js";
 import { getUsageHistory } from "../application/usage/usageHistoryService.js";
+import { getCurrentAssignments } from "../application/plans/assignmentHistoryService.js";
+import { getCurrentAssignmentsWithPlan } from "../infrastructure/repositories/assignmentRepository.js";
 import { evaluateQuota } from "../domain/quotaEvaluator.js";
-import { formatDateForDb, getUtcMonthStart } from "../domain/date.js";
+import { formatDateForDb, getUtcMonthStart, getNextUtcMonthStart } from "../domain/date.js";
 import { MAX_UNITS_PER_REQUEST_BIGINT } from "../config/index.js";
 import { upsertAndLockCounter } from "../infrastructure/repositories/counterRepository.js";
 
@@ -766,6 +768,354 @@ describe("Boundary Integration Tests", () => {
           effectiveFrom: getUtcMonthStart(),
         }, context.account.id)
       ).rejects.toThrow("User-level assignment requires a user plan");
+    });
+  });
+
+  describe("H. Plan upgrade/downgrade effective timing", () => {
+    it("account plan upgrade takes effect immediately", async () => {
+      const context = await setupBasicTestContext();
+      const { account, user, apiKey } = context;
+
+      // Consume some quota under the current plan
+      await processUsageRequest(account.id, {
+        userId: user.clientUserId,
+        units: 100n,
+        idempotencyKey: "pre-upgrade-consumption",
+      }, apiKey.id);
+
+      // Create a higher-allowance account plan (upgrade)
+      const upgradedPlan = await createPlan(
+        {
+          name: "Upgraded Plan",
+          type: "account",
+          monthlyAllowance: 5000n,
+          maxUnitsPerRequest: MAX_UNITS_PER_REQUEST_BIGINT,
+        },
+        account.id
+      );
+
+      // Assign the upgraded plan
+      const assignment = await createAssignment(
+        account.id,
+        { planId: upgradedPlan.id, effectiveFrom: getUtcMonthStart() },
+        account.id
+      );
+
+      // Upgrade takes effect immediately
+      expect(assignment.isCurrent).toBe(true);
+      expect(assignment.effectiveFrom).toBe(formatDateForDb(getUtcMonthStart()));
+
+      // Current assignments return the new plan right away
+      const current = await getCurrentAssignments(account.id);
+      expect(current.account).not.toBeNull();
+      expect(current.account!.planId).toBe(upgradedPlan.id);
+      expect(current.account!.isCurrent).toBe(true);
+
+      // Remaining quota is calculated against the new allowance: 5000 - 100 (pre) - 100 (post) = 4800
+      const result = await processUsageRequest(account.id, {
+        units: 100n,
+        idempotencyKey: "post-upgrade-usage",
+      }, apiKey.id);
+
+      expect(result.decision).toBe("accepted");
+      expect(result.accountRemaining.toString()).toBe("4800");
+    });
+
+    it("user plan upgrade takes effect immediately", async () => {
+      const context = await setupBasicTestContext();
+      const { account, user, apiKey } = context;
+
+      // Consume some user quota under the current user plan
+      await processUsageRequest(account.id, {
+        userId: user.clientUserId,
+        units: 50n,
+        idempotencyKey: "pre-user-upgrade-consumption",
+      }, apiKey.id);
+
+      // Create a higher-allowance user plan (upgrade)
+      const upgradedUserPlan = await createPlan(
+        {
+          name: "Upgraded User Plan",
+          type: "user",
+          monthlyAllowance: 1000n,
+          maxUnitsPerRequest: MAX_UNITS_PER_REQUEST_BIGINT,
+        },
+        account.id
+      );
+
+      // Assign the upgraded user plan
+      const assignment = await createAssignment(
+        account.id,
+        { userId: user.clientUserId, planId: upgradedUserPlan.id, effectiveFrom: getUtcMonthStart() },
+        account.id
+      );
+
+      expect(assignment.isCurrent).toBe(true);
+
+      const current = await getCurrentAssignments(account.id);
+      const userAssignment = current.users.find((u) => u.userId === user.id);
+      expect(userAssignment).not.toBeUndefined();
+      expect(userAssignment!.planId).toBe(upgradedUserPlan.id);
+
+      // Remaining user quota uses the new allowance: 1000 - 50 (pre) - 50 (post) = 900
+      const result = await processUsageRequest(account.id, {
+        userId: user.clientUserId,
+        units: 50n,
+        idempotencyKey: "post-user-upgrade-usage",
+      }, apiKey.id);
+
+      expect(result.decision).toBe("accepted");
+      expect(result.userRemaining!.toString()).toBe("900");
+    });
+
+    it("usage is preserved during an upgrade (counters not reset)", async () => {
+      const context = await setupBasicTestContext();
+      const { account, user, apiKey } = context;
+
+      // Consume some quota under the current plan (within both account and user limits)
+      await processUsageRequest(account.id, {
+        userId: user.clientUserId,
+        units: 50n,
+        idempotencyKey: "pre-upgrade-preserve",
+      }, apiKey.id);
+
+      const [counterBefore] = await getTestDb()
+        .select()
+        .from(usageCounters)
+        .where(eq(usageCounters.accountId, BigInt(account.id)))
+        .execute();
+      expect(Number(counterBefore!.counter)).toBe(50);
+
+      // Upgrade to a higher allowance plan
+      const upgradedPlan = await createPlan(
+        {
+          name: "Upgrade Preserve Plan",
+          type: "account",
+          monthlyAllowance: 5000n,
+          maxUnitsPerRequest: MAX_UNITS_PER_REQUEST_BIGINT,
+        },
+        account.id
+      );
+
+      await createAssignment(
+        account.id,
+        { planId: upgradedPlan.id, effectiveFrom: getUtcMonthStart() },
+        account.id
+      );
+
+      // Counter is preserved (not reset)
+      const [counterAfter] = await getTestDb()
+        .select()
+        .from(usageCounters)
+        .where(eq(usageCounters.accountId, BigInt(account.id)))
+        .execute();
+      expect(Number(counterAfter!.counter)).toBe(50);
+
+      // Remaining quota = new allowance - total consumed = 5000 - 100 = 4900
+      const result = await processUsageRequest(account.id, {
+        userId: user.clientUserId,
+        units: 50n,
+        idempotencyKey: "post-upgrade-preserve",
+      }, apiKey.id);
+
+      expect(result.decision).toBe("accepted");
+      expect(result.accountRemaining.toString()).toBe("4900");
+    });
+
+    it("account plan downgrade stays effective until next UTC month start", async () => {
+      const context = await setupBasicTestContext();
+      const { account, user, apiKey } = context;
+
+      // Create a lower-allowance account plan (downgrade)
+      const downgradedPlan = await createPlan(
+        {
+          name: "Downgraded Plan",
+          type: "account",
+          monthlyAllowance: 200n,
+          maxUnitsPerRequest: MAX_UNITS_PER_REQUEST_BIGINT,
+        },
+        account.id
+      );
+
+      // Schedule the downgrade
+      const assignment = await createAssignment(
+        account.id,
+        { planId: downgradedPlan.id, effectiveFrom: getUtcMonthStart() },
+        account.id
+      );
+
+      // The new assignment is effective at next month start, not immediately
+      const nextMonthStart = getNextUtcMonthStart(new Date());
+      expect(assignment.effectiveFrom).toBe(formatDateForDb(nextMonthStart));
+      // The new assignment has no end date (effectiveTo = null), so isCurrent is true,
+      // but it is not yet the effective plan (its effectiveFrom is in the future).
+      expect(assignment.isCurrent).toBe(true);
+
+      // Current assignments still return the old plan (downgrade not yet effective)
+      const current = await getCurrentAssignments(account.id);
+      expect(current.account).not.toBeNull();
+      expect(current.account!.planId).toBe(context.accountPlan.id);
+      expect(current.account!.isCurrent).toBe(true);
+
+      // Quota evaluation still uses the old allowance immediately after scheduling
+      const result = await processUsageRequest(account.id, {
+        units: 500n,
+        idempotencyKey: "pre-downgrade-usage",
+      }, apiKey.id);
+
+      expect(result.decision).toBe("accepted");
+      expect(result.accountRemaining.toString()).toBe("500"); // 1000 - 500
+
+      // At the next UTC month boundary, the downgraded plan becomes effective
+      const boundaryAssignments = await getCurrentAssignmentsWithPlan(
+        getTestDb(),
+        BigInt(account.id),
+        nextMonthStart
+      );
+      const boundaryAssignment = boundaryAssignments.find((r) => r.userId === null);
+      expect(boundaryAssignment).not.toBeUndefined();
+      expect(boundaryAssignment!.planId).toBe(BigInt(downgradedPlan.id));
+    });
+
+    it("user plan downgrade stays effective until next UTC month start", async () => {
+      const context = await setupBasicTestContext();
+      const { account, user, apiKey } = context;
+
+      // Create a lower-allowance user plan (downgrade)
+      const downgradedUserPlan = await createPlan(
+        {
+          name: "Downgraded User Plan",
+          type: "user",
+          monthlyAllowance: 20n,
+          maxUnitsPerRequest: MAX_UNITS_PER_REQUEST_BIGINT,
+        },
+        account.id
+      );
+
+      const assignment = await createAssignment(
+        account.id,
+        { userId: user.clientUserId, planId: downgradedUserPlan.id, effectiveFrom: getUtcMonthStart() },
+        account.id
+      );
+
+      // The new assignment has no end date (effectiveTo = null), so isCurrent is true,
+      // but it is not yet the effective plan (its effectiveFrom is in the future).
+      expect(assignment.isCurrent).toBe(true);
+
+      // Current assignments still return the old user plan
+      const current = await getCurrentAssignments(account.id);
+      const userAssignment = current.users.find((u) => u.userId === user.id);
+      expect(userAssignment).not.toBeUndefined();
+      expect(userAssignment!.planId).toBe(context.userPlan.id);
+      expect(userAssignment!.isCurrent).toBe(true);
+
+      // Quota evaluation still uses the old user allowance
+      const result = await processUsageRequest(account.id, {
+        userId: user.clientUserId,
+        units: 10n,
+        idempotencyKey: "pre-user-downgrade-usage",
+      }, apiKey.id);
+
+      expect(result.decision).toBe("accepted");
+      expect(result.userRemaining!.toString()).toBe("90"); // 100 - 10
+    });
+
+    it("UTC month boundary calculations are correct", () => {
+      // December year-end boundary
+      const dec31 = new Date(Date.UTC(2026, 11, 31, 23, 59, 59, 999));
+      const jan1 = getNextUtcMonthStart(dec31);
+      expect(jan1.getUTCFullYear()).toBe(2027);
+      expect(jan1.getUTCMonth()).toBe(0); // January
+      expect(jan1.getUTCDate()).toBe(1);
+
+      // February leap year boundary (2026 is not a leap year, Feb has 28 days)
+      const feb28 = new Date(Date.UTC(2026, 1, 28, 12, 0, 0, 0));
+      const mar1 = getNextUtcMonthStart(feb28);
+      expect(mar1.getUTCFullYear()).toBe(2026);
+      expect(mar1.getUTCMonth()).toBe(2); // March
+      expect(mar1.getUTCDate()).toBe(1);
+
+      // Mid-month stays in same month
+      const oct15 = new Date(Date.UTC(2026, 9, 15, 10, 30, 0, 0));
+      const nov1 = getNextUtcMonthStart(oct15);
+      expect(nov1.getUTCFullYear()).toBe(2026);
+      expect(nov1.getUTCMonth()).toBe(10); // November
+      expect(nov1.getUTCDate()).toBe(1);
+    });
+
+    it("repeated assignments do not create duplicate active assignments", async () => {
+      const context = await setupBasicTestContext();
+      const { account } = context;
+
+      // Create a plan and assign it twice
+      const plan = await createPlan(
+        { name: "Repeat Plan", type: "account", monthlyAllowance: 1000n, maxUnitsPerRequest: 100n },
+        account.id
+      );
+
+      const first = await createAssignment(
+        account.id,
+        { planId: plan.id, effectiveFrom: getUtcMonthStart() },
+        account.id
+      );
+
+      // Re-assigning the same plan: same allowance, not a downgrade, ends old and starts new immediately
+      const second = await createAssignment(
+        account.id,
+        { planId: plan.id, effectiveFrom: getUtcMonthStart() },
+        account.id
+      );
+
+      // Only one current account-level assignment should exist
+      const current = await getCurrentAssignments(account.id);
+      expect(current.account).not.toBeNull();
+      expect(current.account!.planId).toBe(plan.id);
+
+      // Verify only one row with effective_to IS NULL in the database
+      const rows = await getTestDb()
+        .select()
+        .from(planAssignments)
+        .where(
+          and(
+            eq(planAssignments.accountId, BigInt(account.id)),
+            isNull(planAssignments.userId),
+            isNull(planAssignments.effectiveTo),
+          )
+        )
+        .execute();
+      expect(rows.length).toBe(1);
+    });
+
+    it("failed assignment rolls back all database changes", async () => {
+      const context = await setupBasicTestContext();
+      const { account } = context;
+
+      // Create a valid plan and an invalid one (from another account would be auth error,
+      // but we can trigger a validation error instead: assign user plan as account-level)
+      const userPlan = context.userPlan;
+
+      // Record assignment count before
+      const beforeCount = await getTestDb()
+        .select()
+        .from(planAssignments)
+        .where(eq(planAssignments.accountId, BigInt(account.id)))
+        .execute();
+
+      // This should fail: assigning a user plan as account-level
+      await expect(
+        createAssignment(account.id, {
+          planId: userPlan.id,
+          effectiveFrom: getUtcMonthStart(),
+        }, account.id)
+      ).rejects.toThrow("Account-level assignment requires an account plan");
+
+      // No new assignment should have been persisted
+      const afterCount = await getTestDb()
+        .select()
+        .from(planAssignments)
+        .where(eq(planAssignments.accountId, BigInt(account.id)))
+        .execute();
+      expect(afterCount.length).toBe(beforeCount.length);
     });
   });
 });
