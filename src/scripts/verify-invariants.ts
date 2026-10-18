@@ -1,4 +1,5 @@
 import { parseArgs } from 'util';
+import { pathToFileURL } from 'url';
 import { sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
 
@@ -15,6 +16,11 @@ import { db } from '../db/client.js';
  *   INV-3  sum(user counters) <= account counter (per account/period)
  *   INV-4  stored remainings are never negative (clamp invariant persisted)
  *   INV-5  period_start is the UTC month of created_at (requests and counters)
+ *          Known false-positive window: a request whose transaction crosses a
+ *          UTC month boundary records period_start from admission-time JS Date
+ *          but created_at from DB NOW() at commit; for that one request per
+ *          month (~1s window) INV-5 may flag a legitimate row. Do not treat an
+ *          INV-5-only report as corruption without inspecting the row.
  *   INV-6  tenant pairing: user-scoped rows belong to the row's account
  *   INV-7  no duplicate (account, idempotency_key)
  *   INV-8  rejected requests contribute zero to counters (follows from INV-1/2
@@ -26,7 +32,7 @@ import { db } from '../db/client.js';
 
 const MAX_ROWS_SHOWN = 20;
 
-interface Violation {
+export interface Violation {
   check: string;
   detail: string;
 }
@@ -50,7 +56,7 @@ function formatRows(rows: Record<string, unknown>[]): string {
   return lines.join('\n    ');
 }
 
-async function verify(accountName?: string): Promise<Violation[]> {
+export async function verify(accountName?: string): Promise<Violation[]> {
   const violations: Violation[] = [];
 
   let accountId: string | null = null;
@@ -290,7 +296,15 @@ async function main(): Promise<void> {
   process.exit(1);
 }
 
-main().catch((err) => {
-  console.error('Invariant verification crashed:', err);
-  process.exit(1);
-});
+// Run main() only when executed directly (node/tsx), not when imported by
+// tests that call verify() in-process against the same database client.
+const isDirectRun =
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isDirectRun) {
+  main().catch((err) => {
+    console.error('Invariant verification crashed:', err);
+    process.exit(1);
+  });
+}
