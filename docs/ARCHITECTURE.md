@@ -28,7 +28,11 @@ HTTP Request
 │  • auth/         apiKeyService                               │
 │  • plans/        planService, assignmentService,             │
 │                  assignmentHistoryService                    │
-│  • usage/        usageService, usageHistoryService           │
+│  • usage/        usageService (orchestrator),                 │
+│                  resolveUsageContext,                         │
+│                  replayUsageRequest,                          │
+│                  persistUsageDecision,                        │
+│                  usageHistoryService                          │
 │  • users/        userService                                 │
 │  • health/       healthService                               │
 └──────────────────────────┬──────────────────────────────────┘
@@ -152,20 +156,23 @@ Presentation: Identity rate limiter (post-auth, keyed by API key id)
 Presentation: Zod Validation (usageRequestSchema)
     │
     ▼
-Application: usageService.processUsageRequest()
+Application: usageService.processUsageRequest()  (orchestrator)
     │  ├─ withTransaction (retry on deadlock/serialization failure)
-    │  ├─ Resolve user (repository: userRepository)
-    │  ├─ Check idempotency key (repository: usageRequestRepository)
+    │  ├─ resolveUserId (resolveUsageContext.ts: repository: userRepository)
+    │  ├─ findReplayDecision (replayUsageRequest.ts: repository: usageRequestRepository)
     │  ├─ If exists + same hash → return original decision
     │  ├─ If exists + different hash → throw ConflictError
-    │  ├─ Upsert + lock account counter (repository: counterRepository)
-    │  ├─ Upsert + lock user counter if applicable
-    │  ├─ Resolve current plans (repository: assignmentRepository + planRepository)
-    │  ├─ Fail closed: missing account/user plan → ConflictError (409)
+    │  ├─ resolveUsageContext (resolveUsageContext.ts)
+    │  │    ├─ Upsert + lock account counter (repository: counterRepository)
+    │  │    ├─ Upsert + lock user counter if applicable
+    │  │    ├─ Resolve current plans (repository: assignmentRepository)
+    │  │    └─ Fail closed: missing account/user plan → ConflictError (409)
     │  ├─ quotaEvaluator.evaluateQuota() (domain: pure function)
-    │  ├─ Insert usage_requests with final decision (repository: usageRequestRepository)
-    │  ├─ If accepted: increment counters (repository: counterRepository)
-    │  ├─ Update API key lastUsedAt (repository: apiKeyRepository)
+    │  ├─ persistUsageDecision (persistUsageDecision.ts)
+    │  │    ├─ Insert usage_requests ON CONFLICT DO NOTHING (repository: usageRequestRepository)
+    │  │    ├─ If accepted: increment counters (repository: counterRepository)
+    │  │    └─ Update API key lastUsedAt (repository: apiKeyRepository)
+    │  ├─ If insert lost a concurrent race → findReplayDecision (converge on winner)
     │  └─ Return QuotaDecision
     ▼
 Presentation: HTTP Response (200 accepted/rejected, 409 conflict, etc.)
@@ -253,6 +260,8 @@ Presentation: HTTP Response (200 accepted/rejected, 409 conflict, etc.)
 | Immediate plan-change timing | Plan switches apply to the next request; the current row is closed at the replacement's start (half-open chain) and pending rows are superseded. Counters are never reset; lowering an allowance below usage clamps remaining to 0. Rationale: matches the required client-facing contract and keeps one mental model for upgrades and downgrades |
 | Idempotency in `usage_requests` | No separate table; atomic with decision persistence |
 | Fail-closed plan checks (409) | Missing plan configuration must never silently relax quota policy |
+| Usage use case split into focused modules | `usageService` orchestrates; `resolveUsageContext` (user + counter locks + plans), `replayUsageRequest` (idempotent replay/conflict), and `persistUsageDecision` (decision insert + counters + last-used) each own one phase. Keeps the transaction body readable without adding classes or changing the request flow |
+| `withTransaction` plain function (no TransactionRunner class) | Transaction execution (retry on 40P01/40001, rollback) is already separated from business code, which receives `tx` and threads it through every repository call. A runner class would add indirection without a concrete testability gain — integration tests exercise real PostgreSQL transactions, not mocks |
 
 ---
 

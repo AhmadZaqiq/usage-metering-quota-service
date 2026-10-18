@@ -1,7 +1,6 @@
-import { sql } from "drizzle-orm";
 import type { Transaction } from "../../db/client.js";
 import { and, eq } from "drizzle-orm";
-import { apiKeys } from "../../db/schema/index.js";
+import { apiKeys, accounts } from "../../db/schema/index.js";
 
 export interface ApiKeyRow {
   id: bigint;
@@ -124,26 +123,31 @@ export async function findApiKeyByPrefix(
   tx: Transaction,
   prefix: string,
 ): Promise<VerifiedApiKeyRecord | null> {
-  const result = await tx.execute(sql`
-    SELECT api_keys.id as id, api_keys.account_id as "accountId", api_keys.key_hash as "keyHash",
-           api_keys.is_revoked as "isRevoked", accounts.is_active as "accountIsActive",
-           accounts.deleted_at as "accountDeletedAt"
-    FROM api_keys
-    INNER JOIN accounts ON api_keys.account_id = accounts.id
-    WHERE api_keys.prefix = ${prefix} AND api_keys.is_revoked = false
-    LIMIT 1
-  `);
+  const result = await tx
+    .select({
+      id: apiKeys.id,
+      accountId: apiKeys.accountId,
+      keyHash: apiKeys.keyHash,
+      isRevoked: apiKeys.isRevoked,
+      accountIsActive: accounts.isActive,
+      accountDeletedAt: accounts.deletedAt,
+    })
+    .from(apiKeys)
+    .innerJoin(accounts, eq(apiKeys.accountId, accounts.id))
+    .where(and(eq(apiKeys.prefix, prefix), eq(apiKeys.isRevoked, false)))
+    .limit(1)
+    .execute();
 
-  if (result.rows.length === 0) return null;
+  if (result.length === 0) return null;
 
-  const record = result.rows[0];
+  const record = result[0];
   return {
-    id: record.id as bigint,
-    accountId: record.accountId as bigint,
-    keyHash: record.keyHash as string,
-    isRevoked: record.isRevoked as boolean,
-    accountIsActive: record.accountIsActive as boolean,
-    accountDeletedAt: record.accountDeletedAt as Date | null,
+    id: record.id,
+    accountId: record.accountId,
+    keyHash: record.keyHash,
+    isRevoked: record.isRevoked,
+    accountIsActive: record.accountIsActive,
+    accountDeletedAt: record.accountDeletedAt,
   };
 }
 

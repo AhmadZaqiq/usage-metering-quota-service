@@ -1,5 +1,6 @@
-import { sql } from "drizzle-orm";
+import { sql, and, desc, eq } from "drizzle-orm";
 import type { Transaction } from "../../db/client.js";
+import { usageRequests } from "../../db/schema/index.js";
 
 export interface UsageRequestRow {
   id: bigint;
@@ -38,16 +39,18 @@ export async function findUsageRequestByKey(
   accountId: bigint,
   idempotencyKey: string
 ): Promise<UsageRequestRow[]> {
-  const result = await tx.execute(sql`
-    SELECT id, account_id as "accountId", user_id as "userId", idempotency_key as "idempotencyKey", 
-           request_hash as "requestHash", units, decision, rejection_reason as "rejectionReason", 
-           period_start as "periodStart", account_remaining as "accountRemaining", 
-           user_remaining as "userRemaining", created_at as "createdAt"
-    FROM usage_requests
-    WHERE account_id = ${accountId} AND idempotency_key = ${idempotencyKey}
-    LIMIT 1
-  `);
-  return result.rows.map(mapRowToUsageRequest);
+  const result = await tx
+    .select()
+    .from(usageRequests)
+    .where(
+      and(
+        eq(usageRequests.accountId, accountId),
+        eq(usageRequests.idempotencyKey, idempotencyKey)
+      )
+    )
+    .limit(1)
+    .execute();
+  return result.map(mapRowToUsageRequest);
 }
 
 export async function insertUsageRequest(
@@ -101,32 +104,33 @@ export async function getUsageHistory(
   const offset = (page - 1) * limit;
 
   const [rows, countResult] = await Promise.all([
-    tx.execute(sql`
-      SELECT id, user_id as "userId", idempotency_key as "idempotencyKey", units, decision, rejection_reason as "rejectionReason",
-             period_start as "periodStart", account_remaining as "accountRemaining",
-             user_remaining as "userRemaining", created_at as "createdAt"
-      FROM usage_requests
-      WHERE account_id = ${accountId}
-      ORDER BY created_at DESC
-      LIMIT ${limit} OFFSET ${offset}
-    `),
-    tx.execute(sql`
-      SELECT count(*) as "count" FROM usage_requests WHERE account_id = ${accountId}
-    `),
+    tx
+      .select({
+        id: usageRequests.id,
+        userId: usageRequests.userId,
+        idempotencyKey: usageRequests.idempotencyKey,
+        units: usageRequests.units,
+        decision: usageRequests.decision,
+        rejectionReason: usageRequests.rejectionReason,
+        periodStart: usageRequests.periodStart,
+        accountRemaining: usageRequests.accountRemaining,
+        userRemaining: usageRequests.userRemaining,
+        createdAt: usageRequests.createdAt,
+      })
+      .from(usageRequests)
+      .where(eq(usageRequests.accountId, accountId))
+      .orderBy(desc(usageRequests.createdAt))
+      .limit(limit)
+      .offset(offset)
+      .execute(),
+    tx
+      .select({ count: sql`count(*)` })
+      .from(usageRequests)
+      .where(eq(usageRequests.accountId, accountId))
+      .execute(),
   ]);
 
-  const items: UsageHistoryItem[] = (rows.rows as Array<{
-    id: bigint;
-    userId: bigint | null;
-    idempotencyKey: string;
-    units: bigint;
-    decision: string;
-    rejectionReason: string | null;
-    periodStart: string;
-    accountRemaining: bigint | null;
-    userRemaining: bigint | null;
-    createdAt: string | Date;
-  }>).map((row) => ({
+  const items: UsageHistoryItem[] = rows.map((row) => ({
     id: row.id.toString(),
     userId: row.userId ? row.userId.toString() : null,
     idempotencyKey: row.idempotencyKey,
@@ -138,10 +142,10 @@ export async function getUsageHistory(
     // fully consumed), not a missing one.
     accountRemaining: row.accountRemaining !== null ? row.accountRemaining.toString() : null,
     userRemaining: row.userRemaining !== null ? row.userRemaining.toString() : null,
-    createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
+    createdAt: row.createdAt.toISOString(),
   }));
 
-  const total = Number((countResult.rows as Array<{ count: string }>)[0].count);
+  const total = Number((countResult[0] as { count: string | number }).count);
   const totalPages = Math.ceil(total / limit);
 
   return { items, total, page, limit, totalPages };
