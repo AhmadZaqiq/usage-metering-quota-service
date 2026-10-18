@@ -142,6 +142,30 @@ export async function selectPlanByAccountAndName(
   return mapRowToPlanRow(result[0]);
 }
 
+// Predefined (system) plans have no owner and are shared by every account.
+export async function selectSystemPlanByTypeAndName(
+  tx: Transaction,
+  type: string,
+  name: string,
+): Promise<PlanRow | null> {
+  const result = await tx
+    .select()
+    .from(plans)
+    .where(
+      and(
+        isNull(plans.ownerAccountId),
+        eq(plans.type, type),
+        eq(plans.name, name),
+        isNull(plans.deletedAt),
+      ),
+    )
+    .limit(1)
+    .execute();
+
+  if (result.length === 0) return null;
+  return mapRowToPlanRow(result[0]);
+}
+
 // CON-03: the not-deleted predicate is part of the WHERE clause so a
 // concurrent soft-delete that commits while we wait is re-evaluated under
 // READ COMMITTED (EvalPlanQual) instead of being silently overwritten.

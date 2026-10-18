@@ -19,15 +19,25 @@ async function findAccount(name: string) {
   return account ? { id: Number(account.id), name: account.name } : null;
 }
 
-async function findAccountPlan(accountId: number) {
+async function findSystemPlan(name: string, type: string) {
   const db = getTestDb();
   const [plan] = await db
     .select({ id: plans.id, name: plans.name, type: plans.type, ownerAccountId: plans.ownerAccountId })
     .from(plans)
-    .where(and(eq(plans.ownerAccountId, BigInt(accountId)), eq(plans.name, "Default Plan"), isNull(plans.deletedAt)))
+    .where(and(isNull(plans.ownerAccountId), eq(plans.name, name), eq(plans.type, type), isNull(plans.deletedAt)))
     .limit(1)
     .execute();
   return plan;
+}
+
+async function countSystemPlans() {
+  const db = getTestDb();
+  const rows = await db
+    .select({ id: plans.id })
+    .from(plans)
+    .where(isNull(plans.ownerAccountId))
+    .execute();
+  return rows.length;
 }
 
 async function findCurrentAccountAssignment(accountId: number) {
@@ -87,39 +97,67 @@ describe("Bootstrap Integration Tests", () => {
     }
   });
 
-  it("creates a default account plan and current account-level assignment on bootstrap", async () => {
+  it("seeds the predefined system-plan catalog idempotently on bootstrap", async () => {
+    await bootstrap();
+
+    const starter = await findSystemPlan("Starter", "account");
+    expect(starter).not.toBeNull();
+    expect(starter!.ownerAccountId).toBeNull();
+
+    const pro = await findSystemPlan("Pro", "account");
+    expect(pro).not.toBeNull();
+    expect(pro!.ownerAccountId).toBeNull();
+
+    const basic = await findSystemPlan("Basic", "user");
+    expect(basic).not.toBeNull();
+    expect(basic!.ownerAccountId).toBeNull();
+
+    const premium = await findSystemPlan("Premium", "user");
+    expect(premium).not.toBeNull();
+    expect(premium!.ownerAccountId).toBeNull();
+
+    const countAfterFirst = await countSystemPlans();
+    expect(countAfterFirst).toBe(4);
+
+    // Re-running bootstrap must not duplicate the catalog.
+    await bootstrap();
+    const countAfterSecond = await countSystemPlans();
+    expect(countAfterSecond).toBe(4);
+  });
+
+  it("assigns the Starter system plan as the default account plan on bootstrap", async () => {
     await bootstrap();
 
     const account = await findAccount("Bootstrap Test Account");
     expect(account).not.toBeNull();
 
-    const plan = await findAccountPlan(account!.id);
-    expect(plan).not.toBeNull();
-    expect(plan!.name).toBe("Default Plan");
-    expect(plan!.type).toBe("account");
-    expect(Number(plan!.ownerAccountId)).toBe(account!.id);
+    const starter = await findSystemPlan("Starter", "account");
+    expect(starter).not.toBeNull();
 
     const assignment = await findCurrentAccountAssignment(account!.id);
     expect(assignment).not.toBeNull();
-    expect(BigInt(assignment!.planId)).toBe(plan!.id);
+    expect(BigInt(assignment!.planId)).toBe(starter!.id);
   });
 
-  it("is idempotent: repeated bootstrap does not duplicate plan or assignment", async () => {
+  it("is idempotent: repeated bootstrap does not duplicate the account or assignment", async () => {
     await bootstrap();
     await bootstrap();
 
     const account = await findAccount("Bootstrap Test Account");
     expect(account).not.toBeNull();
 
-    const db = getTestDb();
-    const planRows = await db
-      .select({ id: plans.id })
-      .from(plans)
-      .where(and(eq(plans.ownerAccountId, BigInt(account!.id)), eq(plans.name, "Default Plan"), isNull(plans.deletedAt)))
-      .execute();
-    expect(planRows.length).toBe(1);
+    const assignmentRows = await findCurrentAccountAssignment(account!.id);
+    expect(assignmentRows).not.toBeNull();
 
-    const assignmentRows = await db
+    const db = getTestDb();
+    const accountRows = await db
+      .select({ id: accounts.id })
+      .from(accounts)
+      .where(eq(accounts.name, "Bootstrap Test Account"))
+      .execute();
+    expect(accountRows.length).toBe(1);
+
+    const openAssignments = await db
       .select({ id: planAssignments.id })
       .from(planAssignments)
       .where(
@@ -130,7 +168,7 @@ describe("Bootstrap Integration Tests", () => {
         )
       )
       .execute();
-    expect(assignmentRows.length).toBe(1);
+    expect(openAssignments.length).toBe(1);
   });
 
   it("allows usage to succeed after bootstrap and does not double-count repeated idempotency key", async () => {
@@ -149,7 +187,7 @@ describe("Bootstrap Integration Tests", () => {
     }, apiKeyId!);
 
     expect(result1.decision).toBe("accepted");
-    expect(result1.accountRemaining.toString()).toBe("9995"); // 10000 - 5
+    expect(result1.accountRemaining.toString()).toBe("49995"); // 50000 (Starter) - 5
 
     const counterAfterFirst = await getAccountCounter(account!.id);
     expect(counterAfterFirst).toBe(5n);
