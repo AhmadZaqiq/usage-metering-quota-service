@@ -1,14 +1,12 @@
 import { withTransaction } from "../../db/client.js";
 import { MAX_UNITS_PER_REQUEST_BIGINT } from "../../config/index.js";
-import { evaluateQuota, type RejectionReason, type LimitScope } from "../../domain/quotaEvaluator.js";
-import { upsertAndLockCounter, incrementCounter, type CounterRow } from "../../infrastructure/repositories/counterRepository.js";
-import { computeRequestHash, type RequestFingerprint } from "../../domain/idempotency.js";
+import { evaluateQuota, type QuotaResult, type RejectionReason, type LimitScope } from "../../domain/quotaEvaluator.js";
+import { computeRequestHash } from "../../domain/idempotency.js";
 import { formatDateForDb, getUtcMonthStart } from "../../domain/date.js";
-import { NotFoundError, ConflictError, ValidationError } from "../../errors/AppError.js";
-import { findUsageRequestByKey, insertUsageRequest, type UsageRequestRow } from "../../infrastructure/repositories/usageRequestRepository.js";
-import { selectUserByAccountAndClientUserId } from "../../infrastructure/repositories/userRepository.js";
-import { selectCurrentAssignmentByAccount, selectCurrentAssignmentByUser, selectPlanByCriteria } from "../../infrastructure/repositories/assignmentRepository.js";
-import { updateApiKeyLastUsedAt } from "../../infrastructure/repositories/apiKeyRepository.js";
+import { ValidationError, ConflictError } from "../../errors/AppError.js";
+import { resolveUserId, resolveUsageContext } from "./resolveUsageContext.js";
+import { findReplayDecision } from "./replayUsageRequest.js";
+import { persistUsageDecision } from "./persistUsageDecision.js";
 
 export interface UsageInput {
   userId?: string;
@@ -26,6 +24,16 @@ export interface QuotaDecision {
   periodStart: string;
 }
 
+/**
+ * Process one usage request end to end inside a single transaction:
+ *
+ *   resolve user -> idempotent replay check -> lock counters + resolve plans
+ *   -> evaluate quota -> persist decision (+ counters, + last-used stamp)
+ *
+ * Replays return the originally committed decision without re-evaluating
+ * quota or taking counter locks; concurrent duplicates converge on the
+ * winner's decision via ON CONFLICT DO NOTHING plus a re-read.
+ */
 export async function processUsageRequest(
   accountId: number,
   input: UsageInput,
@@ -42,171 +50,91 @@ export async function processUsageRequest(
   const periodStartDate = getUtcMonthStart();
   const periodStart = formatDateForDb(periodStartDate);
 
-  const requestFingerprint: RequestFingerprint = {
+  const requestHash = computeRequestHash({
     accountId,
     userId: input.userId ?? null,
     units: input.units.toString(),
-  };
-  const requestHash = computeRequestHash(requestFingerprint);
+  });
 
   return await withTransaction(async (tx) => {
-    let userId: bigint | null = null;
+    const userId = await resolveUserId(tx, BigInt(accountId), input.userId);
 
-    if (input.userId) {
-      const user = await selectUserByAccountAndClientUserId(tx, BigInt(accountId), input.userId);
-
-      if (!user) {
-        throw new NotFoundError("User not found in this account");
-      }
-      userId = user.id;
+    // Check idempotency first - before quota evaluation - so a replay returns
+    // the cached decision with the original remaining quota.
+    const replay = await findReplayDecision(
+      tx,
+      BigInt(accountId),
+      input.idempotencyKey,
+      requestHash
+    );
+    if (replay) {
+      return replay;
     }
 
-    // CHECK IDEMPOTENCY FIRST - before quota evaluation
-    // This allows us to return cached decision with original remaining quota
-    const existing = await findUsageRequestByKey(tx, BigInt(accountId), input.idempotencyKey);
+    const context = await resolveUsageContext(
+      tx,
+      BigInt(accountId),
+      userId,
+      periodStart
+    );
 
-    if (existing.length > 0) {
-      const record = existing[0];
-      if (record.requestHash !== requestHash) {
-        throw new ConflictError("Idempotency key reused with different request data");
-      }
-      // Return cached decision with original remaining quota. `limitScope` is
-      // omitted here and on the conflict-replay path below: it is not persisted
-      // (no column), so a replay cannot recover it without re-evaluating quota,
-      // which would defeat the point of a stable cached result.
-      return {
-        decision: record.decision as "accepted" | "rejected",
-        rejectionReason: record.rejectionReason as RejectionReason | undefined,
-        accountRemaining: record.accountRemaining ?? 0n,
-        userRemaining: record.userRemaining ?? undefined,
-        periodStart: record.periodStart,
-      };
-    }
-
-    // No existing record - proceed with quota evaluation
-    // Get or create counters (this locks the rows)
-    const accountCounter = await upsertAndLockCounter(tx, BigInt(accountId), null, periodStart);
-    let userCounter: CounterRow | null = null;
-    if (userId !== null) {
-      userCounter = await upsertAndLockCounter(tx, BigInt(accountId), userId, periodStart);
-    }
-
-    // Get current plan assignments
-    const accountAssignment = await selectCurrentAssignmentByAccount(tx, BigInt(accountId));
-    const userAssignment = userId ? await selectCurrentAssignmentByUser(tx, userId) : null;
-
-    // Resolve plan quota details from assignments
-    const accountPlanResult = accountAssignment ? await selectPlanByCriteria(tx, accountAssignment.planId) : null;
-    const userPlanResult = userAssignment ? await selectPlanByCriteria(tx, userAssignment.planId) : null;
-
-    if (!accountPlanResult) {
-      // Missing plan configuration is a state conflict (409), not a client
-      // input error; failing closed also prevents consuming without policy.
-      throw new ConflictError("No active account plan assigned");
-    }
-
-    // Fail closed for user-scoped requests: a user without an effective user
-    // plan must not silently fall back to account-only quota (fail-open).
-    if (userId !== null && (!userAssignment || !userPlanResult)) {
-      throw new ConflictError("No active user plan assigned for user");
-    }
-
-    const accountPlanQuota = {
-      monthlyAllowance: accountPlanResult.monthlyAllowance,
-      maxUnitsPerRequest: accountPlanResult.maxUnitsPerRequest,
-    };
-
-    const userPlanQuota = userPlanResult ? {
-      monthlyAllowance: userPlanResult.monthlyAllowance,
-      maxUnitsPerRequest: userPlanResult.maxUnitsPerRequest,
-    } : null;
-
-    // Evaluate quota (handles all business rule validation including units <= 0, max per request)
     const evaluation = evaluateQuota({
-      accountPlan: accountPlanQuota,
-      userPlan: userPlanQuota,
-      accountUsed: BigInt(accountCounter.counter),
-      userUsed: userCounter ? BigInt(userCounter.counter) : 0n,
+      accountPlan: context.accountPlanQuota,
+      userPlan: context.userPlanQuota,
+      accountUsed: BigInt(context.accountCounter.counter),
+      userUsed: context.userCounter ? BigInt(context.userCounter.counter) : 0n,
       requestedUnits: input.units,
       maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
     });
 
-    // For rejected requests with units <= 0, we can't insert due to DB constraint
-    // Just return the evaluation result without persisting (idempotency not supported for invalid units)
+    // Rejected requests with units <= 0 cannot be inserted (DB CHECK
+    // chk_usage_request_units_positive). Return the decision without
+    // persisting; idempotency is not supported for invalid units.
     if (input.units <= 0n) {
-      return {
-        decision: evaluation.decision,
-        rejectionReason: evaluation.rejectionReason,
-        limitScope: evaluation.limitScope,
-        accountRemaining: evaluation.accountRemaining,
-        userRemaining: evaluation.userRemaining,
-        periodStart,
-      };
+      return toLiveDecision(evaluation, periodStart);
     }
 
-    // Insert the usage request with ON CONFLICT DO NOTHING to handle concurrent races
-    // This doesn't abort the transaction on conflict
-    const insertResult = await insertUsageRequest(
-      tx,
-      BigInt(accountId),
+    const stored = await persistUsageDecision(tx, {
+      accountId: BigInt(accountId),
       userId,
-      input.idempotencyKey,
+      idempotencyKey: input.idempotencyKey,
       requestHash,
-      input.units,
-      evaluation.decision,
-      evaluation.rejectionReason ?? null,
+      units: input.units,
+      evaluation,
       periodStart,
-      evaluation.accountRemaining,
-      evaluation.userRemaining ?? null,
-    );
+      accountCounterId: context.accountCounter.id,
+      userCounterId: context.userCounter?.id ?? null,
+      apiKeyId: BigInt(apiKeyId),
+    });
 
-    let requestRecord: UsageRequestRow | undefined;
-
-    if (insertResult.length > 0) {
-      requestRecord = insertResult[0];
-    }
-
-    if (!requestRecord) {
-      // Conflict - another concurrent request inserted the same key
-      // Fetch the existing record and verify hash
-      const existing = await findUsageRequestByKey(tx, BigInt(accountId), input.idempotencyKey);
-
-      if (existing.length > 0) {
-        requestRecord = existing[0];
-        if (requestRecord.requestHash !== requestHash) {
-          throw new ConflictError("Idempotency key reused with different request data");
-        }
-        // Return cached decision with original remaining quota. `limitScope`
-        // omitted (not persisted), same as the replay path above.
-        return {
-          decision: requestRecord.decision as "accepted" | "rejected",
-          rejectionReason: requestRecord.rejectionReason as RejectionReason | undefined,
-          accountRemaining: requestRecord.accountRemaining ?? 0n,
-          userRemaining: requestRecord.userRemaining ?? undefined,
-          periodStart: requestRecord.periodStart,
-        };
+    if (!stored) {
+      // Lost the idempotency race: converge on the winner's committed
+      // decision instead of double-counting.
+      const raced = await findReplayDecision(
+        tx,
+        BigInt(accountId),
+        input.idempotencyKey,
+        requestHash
+      );
+      if (!raced) {
+        // Conflict observed but no record visible - should not happen.
+        throw new ConflictError("Idempotency key conflict");
       }
-      // Should not happen - conflict but no record found
-      throw new ConflictError("Idempotency key conflict");
+      return raced;
     }
 
-    // We won the idempotency key - proceed with counter updates if accepted
-    if (evaluation.decision === "accepted") {
-      await incrementCounter(tx, accountCounter.id, input.units);
-      if (userCounter !== null) {
-        await incrementCounter(tx, userCounter.id, input.units);
-      }
-    }
-
-    await updateApiKeyLastUsedAt(tx, BigInt(apiKeyId));
-
-    return {
-      decision: evaluation.decision,
-      rejectionReason: evaluation.rejectionReason,
-      limitScope: evaluation.limitScope,
-      accountRemaining: evaluation.accountRemaining,
-      userRemaining: evaluation.userRemaining,
-      periodStart,
-    };
+    return toLiveDecision(evaluation, periodStart);
   }, { maxRetries: 3, baseDelayMs: 50 });
+}
+
+/** Map a live evaluation to the response DTO, attaching the period. */
+function toLiveDecision(evaluation: QuotaResult, periodStart: string): QuotaDecision {
+  return {
+    decision: evaluation.decision,
+    rejectionReason: evaluation.rejectionReason,
+    limitScope: evaluation.limitScope,
+    accountRemaining: evaluation.accountRemaining,
+    userRemaining: evaluation.userRemaining,
+    periodStart,
+  };
 }
