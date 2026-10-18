@@ -45,6 +45,22 @@ describe('HTTP rate limit exhaustion', () => {
       // The budget is 100; the limiter must not allow a meaningful overshoot.
       expect(accepted).toBeGreaterThanOrEqual(99);
       expect(accepted).toBeLessThanOrEqual(105);
+
+      // Operational endpoints are mounted before the IP rate limiter and must
+      // stay reachable while the API surface is saturated (orchestrator
+      // probes and operator docs cannot depend on limiter budget).
+      const live = await request(app).get('/health/live');
+      expect(live.status).toBe(200);
+      const ready = await request(app).get('/health/ready');
+      expect(ready.status).toBe(200);
+      const spec = await request(app).get('/docs/openapi.json');
+      expect(spec.status).toBe(200);
+
+      // The authenticated API surface remains saturated.
+      const stillLimited = await request(app)
+        .get('/plans')
+        .set('Authorization', `Bearer ${key}`);
+      expect(stillLimited.status).toBe(429);
     }
   );
 });
