@@ -22,17 +22,17 @@ const MEMORY_STORE_MAX_ENTRIES = 10_000;
 export class MemoryStore implements RateLimiterStore {
   private hits = new Map<string, { count: number; resetTime: number }>();
 
-  async increment(key: string, windowMs: number): Promise<RateLimitInfo> {
+  increment(key: string, windowMs: number): Promise<RateLimitInfo> {
     const now = Date.now();
     const entry = this.hits.get(key);
 
     if (entry && now <= entry.resetTime) {
       entry.count++;
-      return {
+      return Promise.resolve({
         total: entry.count,
         remaining: Math.max(0, entry.count - 1),
         resetTime: entry.resetTime,
-      };
+      });
     }
 
     if (entry) {
@@ -44,7 +44,7 @@ export class MemoryStore implements RateLimiterStore {
 
     const resetTime = now + windowMs;
     this.hits.set(key, { count: 1, resetTime });
-    return { total: 1, remaining: 0, resetTime };
+    return Promise.resolve({ total: 1, remaining: 0, resetTime });
   }
 
   private evict(): void {
@@ -66,12 +66,14 @@ export class MemoryStore implements RateLimiterStore {
     return this.hits.size;
   }
 
-  async reset(key: string): Promise<void> {
+  reset(key: string): Promise<void> {
     this.hits.delete(key);
+    return Promise.resolve();
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
     this.hits.clear();
+    return Promise.resolve();
   }
 }
 
@@ -274,9 +276,6 @@ export function createIdentityRateLimiterMiddleware() {
     }
   };
 }
-
-/** @deprecated Kept for compatibility; equivalent to the IP-based layer. */
-export const createRateLimiterMiddleware = createIpRateLimiterMiddleware;
 
 export async function closeRateLimiterStore(): Promise<void> {
   const closers: Promise<void>[] = [];
