@@ -1,7 +1,7 @@
-import { Redis as RedisClient } from "ioredis";
-import { Request, Response, NextFunction } from "express";
-import { getEnv } from "../config/index.js";
-import { logger } from "../logging/logger.js";
+import { Redis as RedisClient } from 'ioredis';
+import { Request, Response, NextFunction } from 'express';
+import { getEnv } from '../config/index.js';
+import { logger } from '../logging/logger.js';
 
 interface RateLimitInfo {
   total: number;
@@ -28,7 +28,11 @@ export class MemoryStore implements RateLimiterStore {
 
     if (entry && now <= entry.resetTime) {
       entry.count++;
-      return { total: entry.count, remaining: Math.max(0, entry.count - 1), resetTime: entry.resetTime };
+      return {
+        total: entry.count,
+        remaining: Math.max(0, entry.count - 1),
+        resetTime: entry.resetTime,
+      };
     }
 
     if (entry) {
@@ -75,7 +79,7 @@ class RedisStore implements RateLimiterStore {
   private client: RedisClient;
   private keyPrefix: string;
 
-  constructor(redisUrl: string, keyPrefix = "ratelimit:") {
+  constructor(redisUrl: string, keyPrefix = 'ratelimit:') {
     this.client = new RedisClient(redisUrl, {
       maxRetriesPerRequest: 3,
       retryStrategy: (times: number) => {
@@ -86,8 +90,8 @@ class RedisStore implements RateLimiterStore {
     });
     this.keyPrefix = keyPrefix;
 
-    this.client.on("error", (err: Error) => {
-      logger.error({ err }, "Redis rate limiter connection error");
+    this.client.on('error', (err: Error) => {
+      logger.error({ err }, 'Redis rate limiter connection error');
     });
   }
 
@@ -103,11 +107,11 @@ class RedisStore implements RateLimiterStore {
 
     const multi = this.client.multi();
     multi.incr(fullKey);
-    multi.expire(fullKey, windowSec, "NX");
+    multi.expire(fullKey, windowSec, 'NX');
     const results = await multi.exec();
 
     if (!results) {
-      throw new Error("Redis multi exec returned null");
+      throw new Error('Redis multi exec returned null');
     }
 
     const err = results[0][0];
@@ -149,11 +153,14 @@ function ensureRedisStore(redisUrl: string): RedisStore {
       .connect()
       .then(() => {
         redisUsable = true;
-        logger.info("Redis rate limiter connected");
+        logger.info('Redis rate limiter connected');
       })
       .catch((err: Error) => {
         redisUsable = false;
-        logger.error({ err }, "Failed to connect to Redis for rate limiting, using in-process memory store");
+        logger.error(
+          { err },
+          'Failed to connect to Redis for rate limiting, using in-process memory store'
+        );
       });
   }
   return redisStore;
@@ -161,7 +168,10 @@ function ensureRedisStore(redisUrl: string): RedisStore {
 
 function markRedisUnusable(err: Error): void {
   if (redisUsable || !redisCloseLogged) {
-    logger.error({ err }, "Redis rate limiter failed at runtime, switching to in-process memory store");
+    logger.error(
+      { err },
+      'Redis rate limiter failed at runtime, switching to in-process memory store'
+    );
   }
   redisUsable = false;
   redisCloseLogged = true;
@@ -199,14 +209,20 @@ async function incrementWithFallback(key: string, windowMs: number): Promise<Rat
 }
 
 function applyHeaders(res: Response, info: RateLimitInfo, max: number): void {
-  res.setHeader("X-RateLimit-Limit", max.toString());
-  res.setHeader("X-RateLimit-Remaining", Math.max(0, max - info.total).toString());
-  res.setHeader("X-RateLimit-Reset", Math.ceil(info.resetTime / 1000).toString());
+  res.setHeader('X-RateLimit-Limit', max.toString());
+  res.setHeader('X-RateLimit-Remaining', Math.max(0, max - info.total).toString());
+  res.setHeader('X-RateLimit-Reset', Math.ceil(info.resetTime / 1000).toString());
 }
 
-function tooManyRequests(res: Response): void {
+function tooManyRequests(res: Response, info?: RateLimitInfo): void {
+  if (info) {
+    // RFC 6585: 429 responses SHOULD carry Retry-After so clients know when
+    // the window resets instead of guessing or hammering the endpoint.
+    const retryAfterSeconds = Math.max(1, Math.ceil((info.resetTime - Date.now()) / 1000));
+    res.setHeader('Retry-After', retryAfterSeconds.toString());
+  }
   res.status(429).json({
-    error: { code: "RATE_LIMITED", message: "Too many requests" },
+    error: { code: 'RATE_LIMITED', message: 'Too many requests' },
   });
 }
 
@@ -224,13 +240,13 @@ export function createIpRateLimiterMiddleware() {
       const info = await incrementWithFallback(key, env.RATE_LIMIT_WINDOW_MS);
       applyHeaders(res, info, env.RATE_LIMIT_MAX);
       if (info.total > env.RATE_LIMIT_MAX) {
-        return tooManyRequests(res);
+        return tooManyRequests(res, info);
       }
       next();
     } catch (err) {
       // Last-resort failure (even the memory store failed): fail closed.
       // Silently allowing the request would disable the limiter entirely.
-      logger.error({ err, key }, "Rate limiter failed, rejecting request");
+      logger.error({ err, key }, 'Rate limiter failed, rejecting request');
       return tooManyRequests(res);
     }
   };
@@ -249,11 +265,11 @@ export function createIdentityRateLimiterMiddleware() {
       const info = await incrementWithFallback(key, env.RATE_LIMIT_WINDOW_MS);
       applyHeaders(res, info, env.RATE_LIMIT_MAX);
       if (info.total > env.RATE_LIMIT_MAX) {
-        return tooManyRequests(res);
+        return tooManyRequests(res, info);
       }
       next();
     } catch (err) {
-      logger.error({ err, key }, "Rate limiter failed, rejecting request");
+      logger.error({ err, key }, 'Rate limiter failed, rejecting request');
       return tooManyRequests(res);
     }
   };
