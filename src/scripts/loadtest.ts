@@ -23,7 +23,6 @@ interface AutocannonResult {
   latency: {
     p50: number;
     p90: number;
-    p95: number;
     p99: number;
     max: number;
     mean: number;
@@ -106,26 +105,9 @@ async function waitForServer(url: string, maxRetries = 30): Promise<void> {
   throw new Error(`Server at ${url} did not become ready in time`);
 }
 
-async function setupTestAccount(
-  url: string,
-  accountName: string,
-  apiKeyName: string
-): Promise<string> {
-  const bootstrapUrl = new URL('/api-keys', url).toString();
-
-  // First, try to create account and API key via the API if endpoints exist
-  // For now, we'll use a direct DB approach - but for load test we need the API key
-  // We'll bootstrap via the script approach by calling the existing bootstrap logic
-  // For load testing, we expect the bootstrap to have been run already
-
-  // Try to get an API key by calling the API (this won't work without auth)
-  // Instead, we'll rely on the bootstrap script having been run
-  throw new Error(
-    'Test account setup not implemented in load test. ' +
-      "Run 'npm run bootstrap' first with BOOTSTRAP_ACCOUNT_NAME and BOOTSTRAP_API_KEY_NAME set, " +
-      'then use the generated API key.'
-  );
-}
+// autocannon's fixed histogram emits p50, p75, p90, p97_5, p99 and max; it
+// does not compute p95. We report only the percentiles it actually provides
+// rather than interpolating a value it never measured.
 
 function createLoadTestConfig(args: LoadTestArgs, apiKey: string): autocannon.Options {
   let requestCounter = 0;
@@ -200,7 +182,6 @@ function printResults(result: autocannon.Result, args: LoadTestArgs) {
   console.log('\n--- Latency (ms) ---');
   console.log(`  p50: ${formatPercentile(result.latency.p50)}`);
   console.log(`  p90: ${formatPercentile(result.latency.p90)}`);
-  console.log(`  p95: ${formatPercentile(result.latency.p95)}`);
   console.log(`  p99: ${formatPercentile(result.latency.p99)}`);
   console.log(`  max: ${formatPercentile(result.latency.max)}`);
   console.log(`  mean: ${formatPercentile(result.latency.mean)}`);
@@ -235,6 +216,15 @@ function printResults(result: autocannon.Result, args: LoadTestArgs) {
       console.log(`  ${code}: ${count}`);
     }
   }
+
+  // Self-reference: a load test that only reports latency leaves accounting
+  // unverified. Print the exact command that proves counters still equal
+  // accepted totals after this run.
+  console.log('\n--- Post-run accounting check ---');
+  console.log('  Verify counters equal accepted totals and invariants hold:');
+  console.log(
+    '    docker compose run --rm app node dist/scripts/verify-invariants.js'
+  );
 
   console.log('\n========================================\n');
 }
