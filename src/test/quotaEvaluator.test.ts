@@ -165,6 +165,8 @@ describe('Quota Evaluator (Pure Function Unit Tests)', () => {
 
       expect(result.decision).toBe('rejected');
       expect(result.rejectionReason).toBe('max_per_request_exceeded');
+      // The account plan's own cap (100) binds before the global limit (10000).
+      expect(result.limitScope).toBe('account');
     });
 
     it('should reject zero units', () => {
@@ -207,6 +209,7 @@ describe('Quota Evaluator (Pure Function Unit Tests)', () => {
 
       expect(result.decision).toBe('rejected');
       expect(result.rejectionReason).toBe('max_per_request_exceeded');
+      expect(result.limitScope).toBe('global');
     });
 
     it('should respect the lower of account and user max per request', () => {
@@ -221,6 +224,67 @@ describe('Quota Evaluator (Pure Function Unit Tests)', () => {
 
       expect(result.decision).toBe('rejected');
       expect(result.rejectionReason).toBe('max_per_request_exceeded');
+      expect(result.limitScope).toBe('user');
+    });
+
+    it('should attribute the breach to account when the account cap binds', () => {
+      const result = evaluateQuota({
+        accountPlan: { monthlyAllowance: 1000n, maxUnitsPerRequest: 10n },
+        userPlan: { monthlyAllowance: 100n, maxUnitsPerRequest: 50n },
+        accountUsed: 0n,
+        userUsed: 0n,
+        requestedUnits: 15n, // Over account limit (10) but under user limit (50)
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
+      });
+
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('max_per_request_exceeded');
+      expect(result.limitScope).toBe('account');
+    });
+
+    it('should attribute the breach to account when caps are equal', () => {
+      const result = evaluateQuota({
+        accountPlan: { monthlyAllowance: 1000n, maxUnitsPerRequest: 10n },
+        userPlan: { monthlyAllowance: 100n, maxUnitsPerRequest: 10n },
+        accountUsed: 0n,
+        userUsed: 0n,
+        requestedUnits: 11n,
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
+      });
+
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('max_per_request_exceeded');
+      expect(result.limitScope).toBe('account');
+    });
+
+    it('should attribute the breach to account when there is no user plan', () => {
+      const result = evaluateQuota({
+        accountPlan: { monthlyAllowance: 1000n, maxUnitsPerRequest: 10n },
+        userPlan: null,
+        accountUsed: 0n,
+        userUsed: 0n,
+        requestedUnits: 11n,
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
+      });
+
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('max_per_request_exceeded');
+      expect(result.limitScope).toBe('account');
+    });
+
+    it('should omit limitScope when the rejection is not a per-request-cap breach', () => {
+      const result = evaluateQuota({
+        accountPlan: { monthlyAllowance: 10n, maxUnitsPerRequest: 100n },
+        userPlan: null,
+        accountUsed: 10n,
+        userUsed: 0n,
+        requestedUnits: 5n,
+        maxUnitsPerRequestLimit: MAX_UNITS_PER_REQUEST_BIGINT,
+      });
+
+      expect(result.decision).toBe('rejected');
+      expect(result.rejectionReason).toBe('account_quota_exceeded');
+      expect(result.limitScope).toBeUndefined();
     });
   });
 

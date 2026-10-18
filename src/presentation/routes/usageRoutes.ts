@@ -31,6 +31,11 @@ router.post(
     if (result.rejectionReason) {
       response.rejectionReason = result.rejectionReason;
     }
+    // Only present when the rejection was a per-request-cap breach, and only on
+    // a live evaluation (not an idempotent replay of a stored decision).
+    if (result.limitScope !== undefined) {
+      response.limitScope = result.limitScope;
+    }
 
     return res.json(response);
   })
