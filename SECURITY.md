@@ -34,11 +34,11 @@ If you discover a security vulnerability in this project, please report it respo
 - Parameterized queries via Drizzle ORM (no SQL injection)
 
 ### Rate Limiting
-- **Distributed rate limiting via Redis** (optional, falls back to in-memory)
-- Unauthenticated: per IP
-- Authenticated: per API key prefix (never raw secret)
-- Atomic increment/expiration with Redis Lua scripts
-- Graceful degradation to in-memory if Redis unavailable
+- **Distributed rate limiting via Redis** (optional, falls back to a bounded in-process store)
+- Unauthenticated: per IP (`ip:<address>`)
+- Authenticated: per verified API-key id (`key:<id>`, never the raw secret or prefix)
+- Atomic increment/expiration via a Redis `MULTI`/`EXEC` (`INCR` + `EXPIRE ... NX`)
+- Graceful degradation to in-memory if Redis unavailable; fail-closed (429) if every store fails
 - Standard headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
 
 ### Secrets Management
@@ -58,7 +58,6 @@ If you discover a security vulnerability in this project, please report it respo
 - Recommended reverse proxies: nginx, Traefik, Caddy, Cloudflare
 - Proxy must forward: `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Request-ID`
 - Application trusts proxy headers only when `TRUST_PROXY=true` (default: false)
-- Local development exception: `NODE_ENV=development` allows HTTP
 
 ## Known Limitations
 
@@ -72,7 +71,7 @@ If you discover a security vulnerability in this project, please report it respo
 - [ ] Use strong, unique `POSTGRES_PASSWORD`
 - [ ] Configure reverse proxy with TLS certificates
 - [ ] Set `TRUST_PROXY=true` when behind trusted reverse proxy
-- [ ] Restrict CORS origins to known domains
+- [ ] CORS is not configured (no browser clients): if browser-based clients are added later, restrict CORS origins to known domains in `app.ts`
 - [ ] Set `LOG_LEVEL=warn` or `error` in production
 - [ ] Use secrets manager for `DATABASE_URL`, `REDIS_URL`, and other secrets
 - [ ] Configure database connection pooling for production load

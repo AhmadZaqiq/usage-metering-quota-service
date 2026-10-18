@@ -14,10 +14,11 @@ A professional, backend-only Usage Metering & Quota Service built with TypeScrip
 - **Plan Assignments**: Account-level and user-level assignments with effective dates and history
 - **Monthly Quota Periods**: UTC-based monthly accounting with separate account and user counters
 - **Idempotency**: Deterministic request hashing prevents duplicate consumption on retries
-- **Concurrency Safety**: Pessimistic locking (`SELECT FOR UPDATE`) with consistent lock ordering
+- **Concurrency Safety**: Counter rows are serialized by an upsert row lock (`INSERT ... ON CONFLICT DO UPDATE`) held to commit; plan and assignment rows use `SELECT FOR UPDATE` with consistent lock ordering
 - **Per-Request Breach Scope**: A `max_per_request_exceeded` rejection reports which cap rejected the request (`global`, `account`, or `user`) so clients can tell a plan cap apart from the global limit
 - **Structured Logging**: Pino-based request/decision logging with correlation IDs
 - **Health Endpoints**: Liveness (`/health/live`) and readiness (`/health/ready`) probes
+- **API Documentation**: OpenAPI 3.1 specification at `/docs/openapi.json` and interactive Swagger UI at `/docs`
 - **Rate Limiting**: Two layers — per-IP before authentication, per-API-key after; Redis-backed with in-process fallback (falling back to a bounded in-memory store per instance; if both stores fail, requests are rejected 429 — fail-closed)
 - **Docker Support**: Docker Compose for local development with PostgreSQL 16; the container starts as root only to repair the secrets volume's ownership, then drops to the unprivileged `node` user before serving traffic
 - **Example Client**: Demo CLI that walks the full lifecycle end to end (accepted usage, all three rejection types, divergent per-user plans, immediate plan changes, idempotent replay, and proof that rejected requests are preserved in history)
@@ -33,7 +34,8 @@ A professional, backend-only Usage Metering & Quota Service built with TypeScrip
 graph TD
     A[Presentation: Routes + Middleware] --> B[Application: Use Case Services]
     B --> C[Domain: Pure Business Rules]
-    C --> D[Infrastructure: Repositories + External]
+    A --> D[Infrastructure: Repositories + External]
+    B --> D
     D --> E[Database: PostgreSQL + Drizzle]
     
     F[Cross-cutting: Config, Logging, Errors, Validation] -.-> A
@@ -167,6 +169,8 @@ It is not persisted, so an idempotent replay of a stored rejection omits it rath
 
 ## API Reference
 
+Interactive documentation: `GET /docs` (Swagger UI). Machine-readable spec: `GET /docs/openapi.json` (OpenAPI 3.1, hand-maintained in `src/docs/openapi.ts`; the `docs.test.ts` smoke test fails if routers and spec drift apart).
+
 ### Authentication
 All protected endpoints require `Authorization: Bearer <api_key>` header.
 API key format: `<prefix>.<secret>` (prefix stored plain, secret hashed with SHA-256)
@@ -183,7 +187,7 @@ API key format: `<prefix>.<secret>` (prefix stored plain, secret hashed with SHA
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | `POST` | `/api-keys` | Yes | Create key (returns full key once) |
-| `GET` | `/api-keys` | Yes | List keys (prefix, name, revoked, created) |
+| `GET` | `/api-keys` | Yes | List keys (id, prefix, name, revoked, lastUsedAt, created) |
 | `DELETE` | `/api-keys/:id` | Yes | Revoke key |
 
 #### Plans
@@ -277,7 +281,7 @@ All errors follow consistent format:
 ```json
 {
   "error": {
-    "code": "VALIDATION_ERROR" | "AUTHENTICATION_FAILED" | "AUTHORIZATION_FAILED" | "NOT_FOUND" | "CONFLICT" | "RATE_LIMITED" | "PAYLOAD_TOO_LARGE" | "INTERNAL_ERROR",
+    "code": "VALIDATION_ERROR" | "AUTHENTICATION_FAILED" | "AUTHORIZATION_FAILED" | "NOT_FOUND" | "CONFLICT" | "IDEMPOTENCY_CONFLICT" | "RATE_LIMITED" | "PAYLOAD_TOO_LARGE" | "INTERNAL_ERROR" | "TRANSACTION_CONFLICT",
     "message": "Human-readable description",
     "details": {}
   }
@@ -291,9 +295,11 @@ All errors follow consistent format:
 | 403 | `AUTHORIZATION_FAILED` | Authenticated but not allowed (cross-tenant resource, ownership violation) |
 | 404 | `NOT_FOUND` | Resource not found, soft-deleted, or `userId` not in this account; plan vanished while waiting for a lock |
 | 409 | `CONFLICT` | Idempotency key reused with different payload; no effective account/user plan (fail-closed); plan currently or pending assigned (delete/deactivate); overlapping assignment; assignment subject/plan conflict |
+| 409 | `IDEMPOTENCY_CONFLICT` | Defensive mapping if a unique violation on `usage_requests` ever escapes the `ON CONFLICT DO NOTHING` write path (not expected in normal operation) |
 | 413 | `PAYLOAD_TOO_LARGE` | Request body above the 64 KB limit |
-| 429 | `RATE_LIMITED` | Rate limit exceeded (per-IP or per-API-key layer); includes `Retry-After` and `X-RateLimit-*` headers |
+| 429 | `RATE_LIMITED` | Rate limit exceeded (per-IP or per-API-key layer); normally includes `Retry-After` and `X-RateLimit-*` headers (the last-resort fail-closed path omits `Retry-After`) |
 | 500 | `INTERNAL_ERROR` | Unexpected server error |
+| 503 | `TRANSACTION_CONFLICT` | Deadlock or serialization failure survived all transaction retries (40P01/40001); safe to retry the request |
 
 ---
 
@@ -311,15 +317,22 @@ Copy `.env.example` to `.env` and adjust:
 cp .env.example .env
 ```
 
-Required variables:
+Only one variable is required; everything else has a working default:
+
 ```env
+# Required
 DATABASE_URL=postgresql://app:app_secret@localhost:5432/usage_metering
+
+# Optional (defaults shown; see .env.example)
 MAX_UNITS_PER_REQUEST=10000
 RATE_LIMIT_WINDOW_MS=60000
 RATE_LIMIT_MAX=100
-LOG_LEVEL=debug
-REDIS_URL=redis://redis:6379
+LOG_LEVEL=info
 TRUST_PROXY=false
+# REDIS_URL is optional: without it, rate limiting uses a bounded in-process store.
+# The value below is the Docker Compose-internal hostname; for host-local
+# development without Docker use redis://localhost:6379 (or omit it entirely).
+# REDIS_URL=redis://redis:6379
 ```
 
 ### Docker Compose (Recommended)
@@ -413,8 +426,9 @@ curl -X POST http://localhost:3000/usage \
 # limitScope), immediate plan changes, idempotent replay, credential + input
 # rejections, and a history check proving rejected requests are preserved.
 # Exit code 0 = all checks passed; the full API key is never printed.
-npm run client -- -k <API_KEY>            # key also read from /run/secrets/api-key
-npm run client                            # Docker Compose: reads the secrets volume
+npm run client -- -k <API_KEY>            # key from the -k flag (works on the host)
+npm run client                            # falls back to /run/secrets/api-key, which
+                                          # exists inside Docker only — on the host, pass -k
 
 # Single request mode
 npm run client -- -n 5 -i req-001 --userId user123 -k <API_KEY>
@@ -464,7 +478,7 @@ npm test
 npm run test:coverage
 ```
 
-Tests use real PostgreSQL (test database via Docker Compose). No mocks for database behavior. The suite includes unit tests (pure domain), HTTP integration tests through the real Express pipeline (auth, validation, usage decisions, rate limiting), concurrency tests, and direct-SQL constraint proofs. As of the latest run: **17 test files, 192 tests, all passing**.
+Tests use real PostgreSQL (test database via Docker Compose). No mocks for database behavior. The suite includes unit tests (pure domain), HTTP integration tests through the real Express pipeline (auth, validation, usage decisions, rate limiting), concurrency tests, and direct-SQL constraint proofs. As of the latest run: **21 test files, 204 tests, all passing**.
 
 After running the demo or a load test, verify that counters still match the decision log:
 
@@ -531,7 +545,10 @@ src/
 │   │   ├── assignmentService.ts # Assignment lifecycle, overlap prevention
 │   │   └── assignmentHistoryService.ts # List current + historical assignments
 │   ├── usage/
-│   │   ├── usageService.ts     # Transactional usage processing, idempotency
+│   │   ├── usageService.ts     # Transaction orchestration (single tx: resolve → replay check → lock → evaluate → persist)
+│   │   ├── resolveUsageContext.ts # User resolution, counter locks, plan resolution (fail-closed)
+│   │   ├── replayUsageRequest.ts # Idempotent replay lookup + hash-conflict detection
+│   │   ├── persistUsageDecision.ts # Decision insert, conditional counter increments, last-used stamp
 │   │   └── usageHistoryService.ts # Paginated usage request history
 │   ├── users/
 │   │   └── userService.ts      # User CRUD within an account
@@ -556,10 +573,13 @@ src/
 │   └── routes/
 │       ├── apiKeyRoutes.ts     # POST/GET/DELETE /api-keys
 │       ├── assignmentRoutes.ts # POST/GET /assignments, GET /assignments/current
+│       ├── docsRoutes.ts       # GET /docs (Swagger UI), GET /docs/openapi.json
 │       ├── healthRoutes.ts     # GET /health/live, GET /health/ready
 │       ├── planRoutes.ts       # CRUD /plans
 │       ├── usageRoutes.ts      # POST /usage, GET /usage (history)
 │       └── userRoutes.ts       # POST/GET /users
+├── docs/
+│   └── openapi.ts              # Hand-maintained OpenAPI 3.1 specification
 ├── errors/
 │   ├── AppError.ts             # Typed error classes
 │   └── errorHandler.ts         # Express error middleware, HTTP status mapping
@@ -576,9 +596,13 @@ src/
 └── test/
     ├── setup.ts                # Test database lifecycle (migrate, truncate)
     ├── utils.ts                # Test helper functions
+    ├── accountRepository.test.ts # Account row mapping / soft-delete guard
     ├── assignmentPolicy.test.ts # Immediate changes, supersession, EPQ lock races, BR-13
     ├── bootstrap.test.ts       # Bootstrap integration tests
     ├── boundary.test.ts        # Quota, bigint, idempotency, plan boundary tests
+    ├── docs.test.ts            # OpenAPI spec completeness + Swagger UI smoke test
+    ├── monthBoundary.test.ts   # UTC month-boundary period semantics (admission time + replay)
+    ├── verifyInvariants.test.ts # Verifier self-test: clean pass + seeded INV-1 mismatch detection
     ├── concurrency.test.ts     # Concurrent quota consumption, idempotency tests
     ├── config.test.ts          # TRUST_PROXY and env validation tests
     ├── dbConstraints.test.ts   # Direct-SQL proof of DB constraints (incl. composite FKs)
@@ -622,7 +646,7 @@ Honest status of items that are deliberately not done:
 2. **`int8` Type Parser (audit DB-08)**: PostgreSQL `BIGINT` values are coerced to native `bigint` at repository mapping boundaries (and via Drizzle `mode: "bigint"`) instead of installing a global `pg` type parser. A global parser would also affect health checks, migrations, and any future raw client usage; the localized approach is explicit and test-covered.
 3. **Single-Instance Rate Limiting**: Without `REDIS_URL`, per-IP/per-key counters are per-process; multi-instance deployments require Redis. Redis failure degrades to a bounded in-process store per instance (still enforced, not shared).
 4. **No Distributed Tracing / Metrics**: Structured logs with request IDs only; no OpenTelemetry or Prometheus.
-5. **Performance Baseline**: A dated measurement of the Compose stack exists ([`docs/performance/2026-10-18-compose.md`](docs/performance/2026-10-18-compose.md)) but is not re-run for every change; numbers describe a single development machine.
+5. **Performance Baseline**: Dated measurements of the Compose stack exist ([`docs/performance/2026-10-18-compose.md`](docs/performance/2026-10-18-compose.md) for a 30-second baseline; [`docs/performance/2026-10-18-stress.md`](docs/performance/2026-10-18-stress.md) for the progressive stress campaign 10→1000 connections) but are not re-run for every change; numbers describe a single development machine.
 6. **No Independent Security Audit**: The "Security" section describes implemented controls with tests; it is not a substitute for a professional assessment (see portfolio notice above).
 7. **`drizzle-orm` Advisory CVE-2026-39356 (GHSA-gpj5-g38j-94v9, high)**: Affects identifier-escaping (`sql.identifier()` / `.as()`) when untrusted input reaches identifier construction. This codebase builds identifiers only from static schema objects and internal constants (the only `sql.raw()` usage interpolates compile-time conflict-target strings; no `sql.identifier()` calls exist), which the advisory explicitly scopes out of impact. Upgrading `drizzle-orm` 0.33 → 0.45.x is a breaking-change maintenance item scheduled after this milestone, not silently ignored.
 
@@ -659,7 +683,7 @@ Load testing was performed with Autocannon against the Docker Compose stack (app
 
 After the run the database showed 3,622 accepted / 0 rejected requests and an account counter exactly equal to the accepted sum; the invariant verifier passed for the whole database. Throughput is limited by the per-request transaction (counter lock + decision-log insert + commit); with 10 connections at ~82 ms mean latency, the observed rate matches the latency-bound prediction (≈122 req/s).
 
-Full method, database evidence, and reproduction steps: [`docs/performance/2026-10-18-compose.md`](docs/performance/2026-10-18-compose.md).
+Full method, database evidence, and reproduction steps: [`docs/performance/2026-10-18-compose.md`](docs/performance/2026-10-18-compose.md). A longer progressive stress campaign (10→1000 connections, idempotency storm, multi-user contention, invariant checks before/after) is recorded in [`docs/performance/2026-10-18-stress.md`](docs/performance/2026-10-18-stress.md).
 
 ---
 

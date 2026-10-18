@@ -51,25 +51,6 @@ export async function upsertAndLockCounter(
   return mapRowToCounterRow(result.rows[0]);
 }
 
-export async function getCounterForUpdate(
-  tx: Transaction,
-  accountId: bigint,
-  userId: bigint | null,
-  periodStart: string
-): Promise<CounterRow | null> {
-  const result = await tx.execute(sql`
-    SELECT id, account_id as "accountId", user_id as "userId", period_start as "periodStart", counter, created_at as "createdAt", updated_at as "updatedAt"
-    FROM usage_counters
-    WHERE account_id = ${accountId}
-      AND period_start = ${periodStart}
-      ${userId === null ? sql`AND user_id IS NULL` : sql`AND user_id = ${userId}`}
-    LIMIT 1
-  `);
-
-  if (result.rows.length === 0) return null;
-  return mapRowToCounterRow(result.rows[0]);
-}
-
 export async function incrementCounter(
   tx: Transaction,
   counterId: bigint,

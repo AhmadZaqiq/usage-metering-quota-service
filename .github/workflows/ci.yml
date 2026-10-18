@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Typecheck, lint, build, test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: usage_metering_test
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app_secret
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U app -d usage_metering_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      # Same host/port the test setup defaults to (src/test/setup.ts).
+      TEST_DATABASE_URL: postgresql://app:app_secret@localhost:5433/usage_metering_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test
+
+  compose-smoke:
+    name: Docker Compose smoke (demo client + invariant verifier)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start the stack
+        # Only app + dependencies: --wait fails on the one-shot client
+        # service once it exits, so client runs on demand below.
+        run: docker compose up -d --build --wait app
+      - name: Run the demo client (exit 0 = all checks passed)
+        run: docker compose run --rm client
+      - name: Verify accounting invariants in the demo database
+        run: docker compose run --rm app node dist/scripts/verify-invariants.js
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

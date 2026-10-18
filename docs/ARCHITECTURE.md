@@ -90,10 +90,12 @@ HTTP Request
 ## Dependency Direction
 
 ```
-Presentation → Application → Domain → Infrastructure → Database
-                              ↑
-                    Cross-cutting (config, logging, errors,
-                    validation) used by all layers as needed
+Presentation ──► Application ──► Domain (pure)
+      │               │
+      └──────►  Infrastructure ──► Database
+                      ↑
+        Cross-cutting (config, logging, errors,
+        validation) used by all layers as needed
 ```
 
 **Rules:**
@@ -190,7 +192,7 @@ Presentation: HTTP Response (200 accepted/rejected, 409 conflict, etc.)
 | `plans` | PK `id`, check `type IN ('account','user')`, partial unique indexes ignoring soft-deleted rows |
 | `plan_assignments` | PK `id`, partial unique current assignments, two partial exclusion constraints, range CHECK, plan-type trigger, composite tenant FK |
 | `usage_counters` | PK `id`, partial unique per period (user NULL / not NULL), `CHECK (counter >= 0)`, composite tenant FK |
-| `usage_requests` | PK `id`, unique `(account_id, idempotency_key)`, hash + decision checks, composite tenant FK |
+| `usage_requests` | PK `id`, unique `(account_id, idempotency_key)`, positive-units CHECK, decision CHECK, composite tenant FK |
 | `api_keys` | PK `id`, unique `prefix`, hash, revocation flags |
 
 **Custom SQL Migrations (`src/db/sql/`):**
@@ -208,12 +210,12 @@ Presentation: HTTP Response (200 accepted/rejected, 409 conflict, etc.)
 | Invariant | Enforcement |
 |-----------|-------------|
 | Tenant isolation | All queries scoped by `account_id` from authenticated API key |
-| No quota over-consumption | `SELECT FOR UPDATE` on counters + atomic increment within transaction |
+| No quota over-consumption | Counter row lock taken by `INSERT ... ON CONFLICT DO UPDATE` upsert (`upsertAndLockCounter`) held to commit + atomic increment within the same transaction |
 | Idempotency | Unique constraint on `(account_id, idempotency_key)` + request hash comparison |
 | Plan-type match | PostgreSQL trigger on `plan_assignments` |
 | No overlapping assignments | Two partial exclusion constraints on `tstzrange` |
 | User belongs to account | Composite FK `(account_id, user_id) → users(account_id, id)` on usage_counters, usage_requests, plan_assignments |
-| Fail-closed plan requirements | `usageService` throws `ConflictError` (409) when an account/user plan is missing — no account-only fallback for user-scoped input |
+| Fail-closed plan requirements | `resolveUsageContext` throws `ConflictError` (409) when an account/user plan is missing — no account-only fallback for user-scoped input |
 | Counters never negative | `CHECK (counter >= 0)` + atomic updates; evaluator clamps remaining at 0 when an allowance drops below usage |
 | Positive units | `CHECK (units > 0)` in DB + Zod validation |
 | Monthly UTC periods | Computed once per request via `domain/date.ts` |
@@ -239,7 +241,7 @@ Presentation: HTTP Response (200 accepted/rejected, 409 conflict, etc.)
 
 ## Known Limitations
 
-1. **Rate Limiter**: Redis-backed when `REDIS_URL` is configured, else in-process; if both stores fail at runtime the limiter fails **closed** (429). Counters are per-instance without Redis
+1. **Rate Limiter**: Redis-backed when `REDIS_URL` is configured, else in-process (bounded to 10,000 keys with oldest-first eviction); if both stores fail at runtime the limiter fails **closed** (429). Counters are per-instance without Redis
 2. **Idempotency Key Retention**: Indefinite; no TTL or archival
 3. **No Distributed Tracing**: Single-instance observability only
 4. **Horizontal Scaling**: Single app instance; rate limiter state not shared without Redis

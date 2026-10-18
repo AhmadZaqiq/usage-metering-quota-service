@@ -43,18 +43,6 @@ export class ConflictError extends AppError {
   }
 }
 
-export class RateLimitedError extends AppError {
-  constructor(message = "Too many requests", retryAfter?: number) {
-    super(429, "RATE_LIMITED", message, retryAfter ? { retryAfter } : undefined);
-  }
-}
-
-export class BusinessError extends AppError {
-  constructor(message: string, details?: Record<string, unknown>) {
-    super(400, "BUSINESS_ERROR", message, details);
-  }
-}
-
 export class InternalError extends AppError {
   constructor(message = "Internal server error", details?: Record<string, unknown>) {
     super(500, "INTERNAL_ERROR", message, details);

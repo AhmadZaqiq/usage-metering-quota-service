@@ -16,6 +16,7 @@ import planRoutes from "./presentation/routes/planRoutes.js";
 import assignmentRoutes from "./presentation/routes/assignmentRoutes.js";
 import userRoutes from "./presentation/routes/userRoutes.js";
 import healthRoutes from "./presentation/routes/healthRoutes.js";
+import docsRoutes from "./presentation/routes/docsRoutes.js";
 
 declare module "express" {
   interface Request {
@@ -65,13 +66,23 @@ export function createApp(): express.Application {
     next();
   });
 
-  // Layer 1: IP-keyed limit before authentication (never trusts credentials).
-  app.use(createIpRateLimiterMiddleware());
-
+  // Operational endpoints first: liveness/readiness probes and API
+  // documentation must keep working when the per-IP rate limiter is
+  // saturated (or its stores are down), so orchestrators and operators can
+  // still observe the service. They expose no tenant data.
   app.use("/health", healthRoutes);
+  app.use("/docs", docsRoutes);
+
+  // Layer 1: IP-keyed limit before authentication (never trusts credentials).
+  // asyncHandler adapts the promise-returning middleware to Express's
+  // void-return contract (typescript-eslint no-misused-promises).
+  app.use(asyncHandler(createIpRateLimiterMiddleware()));
 
   // Layer 2: identity-keyed limit after successful verification (tenant isolation).
-  const authenticated = [asyncHandler(authMiddleware), createIdentityRateLimiterMiddleware()];
+  const authenticated = [
+    asyncHandler(authMiddleware),
+    asyncHandler(createIdentityRateLimiterMiddleware()),
+  ];
 
   app.use("/usage", ...authenticated, usageRoutes);
   app.use("/api-keys", ...authenticated, apiKeyRoutes);

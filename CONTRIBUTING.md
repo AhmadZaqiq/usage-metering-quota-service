@@ -45,7 +45,7 @@ npm run typecheck
 # Linting
 npm run lint
 
-# Format check
+# Format (Prettier writes in place; there is no separate check-only script)
 npm run format
 
 # Run tests (requires test database)
@@ -54,7 +54,16 @@ npm test
 
 # Build production bundle
 npm run build
+
+# All of the above in one command (what CI runs, minus the compose smoke job)
+npm run verify
 ```
+
+CI (`.github/workflows/ci.yml`) runs the same steps on every push to `main`
+and every pull request: typecheck, lint, build, and the full test suite
+against a PostgreSQL 16 service container, plus a Docker Compose smoke job
+that boots the stack, runs the demo client, and executes the invariant
+verifier.
 
 ## Project Standards
 
@@ -77,7 +86,7 @@ npm run build
 - Partial unique indexes for current assignments
 - Exclusion constraints for overlapping periods
 - Triggers for plan-type compatibility
-- Sentinel `user_id = 0` for account-level counters
+- `NULL` `user_id` for account-level counters (partial unique indexes separate NULL vs non-NULL rows)
 
 ### Testing
 - Unit tests for pure functions (quota evaluator, hash, date utils)
@@ -104,7 +113,7 @@ test: add concurrent quota exhaustion test
 
 ## Known Constraints
 
-- **In-Memory Rate Limiter**: Not distributed; single-instance only
+- **Rate Limiter**: Redis-backed when `REDIS_URL` is set, with a bounded in-process fallback; per-instance counters without Redis
 - **Drizzle Partial Indexes**: Custom SQL migrations required for some constraints
 - **BigInt Serialization**: JSON responses stringify BigInt values
 - **Idempotency Keys**: Never expire (indefinite retention)
@@ -112,8 +121,8 @@ test: add concurrent quota exhaustion test
 ## Adding Features
 
 1. Define Zod schema in `src/validation/schemas.ts`
-- Add route in appropriate `src/routes/*.ts`
-- Implement service logic in `src/modules/*/`
+- Add route in appropriate `src/presentation/routes/*.ts`
+- Implement service logic in `src/application/*/`
 - Add database constraints if needed (custom SQL migration)
 - Add unit + integration tests
 - Update README if API changes

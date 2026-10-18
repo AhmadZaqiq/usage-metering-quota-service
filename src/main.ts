@@ -38,16 +38,20 @@ function shutdown(signal: string) {
   // Stop serving keep-alive connections so server.close() can finish, then
   // drain in-flight requests.
   server.closeIdleConnections();
-  server.close(async () => {
+  server.close(() => {
     logger.info("HTTP server closed");
-    try {
-      await Promise.all([closePool(), appShutdown()]);
-      logger.info("Database pool and rate limiter closed");
-      process.exit(0);
-    } catch (err) {
-      logger.error({ err }, "Error during shutdown");
-      process.exit(1);
-    }
+    // Express's close callback is void-returning; the drain work below is a
+    // self-contained async step whose failure paths only call process.exit.
+    void (async () => {
+      try {
+        await Promise.all([closePool(), appShutdown()]);
+        logger.info("Database pool and rate limiter closed");
+        process.exit(0);
+      } catch (err) {
+        logger.error({ err }, "Error during shutdown");
+        process.exit(1);
+      }
+    })();
   });
 
   setTimeout(() => {

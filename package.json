@@ -14,6 +14,7 @@
     "test": "vitest run --config .config/vitest.config.ts",
     "test:watch": "vitest --config .config/vitest.config.ts",
     "test:coverage": "vitest run --coverage --config .config/vitest.config.ts",
+    "verify": "npm run typecheck && npm run lint && npm run build && npm test",
     "db:generate": "drizzle-kit generate --config .config/drizzle.config.ts",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:studio": "drizzle-kit studio --config .config/drizzle.config.ts",
@@ -38,6 +39,7 @@
     "pg": "^8.12.0",
     "pino": "^9.3.2",
     "pino-pretty": "^11.2.2",
+    "swagger-ui-express": "^5.0.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -46,6 +48,7 @@
     "@types/node": "^22.5.0",
     "@types/pg": "^8.11.6",
     "@types/supertest": "^6.0.2",
+    "@types/swagger-ui-express": "^4.1.8",
     "@vitest/coverage-v8": "^2.1.9",
     "autocannon": "^7.14.0",
     "drizzle-kit": "^0.24.0",

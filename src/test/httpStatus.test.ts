@@ -90,5 +90,39 @@ describe("HTTP status and error handling", () => {
       expect((capturedBody as { error: { message: string } }).error.message).toBe("Internal server error");
       expect((capturedBody as { error: { details: unknown } }).error.details).toBeUndefined();
     });
+
+    it.each([
+      ["40001", "could not serialize access due to concurrent update"],
+      ["40P01", "deadlock detected"],
+    ])(
+      "errorHandler maps PostgreSQL SQLSTATE %s to 503 TRANSACTION_CONFLICT",
+      async (sqlState, message) => {
+        let capturedStatus: number | null = null;
+        let capturedBody: unknown = null;
+        const mockReq = {} as never;
+        const mockRes = {
+          getHeader: () => "unknown",
+          status: (code: number) => {
+            capturedStatus = code;
+            return mockRes;
+          },
+          json: (body: unknown) => {
+            capturedBody = body;
+            return mockRes;
+          },
+        } as never;
+
+        errorHandler(
+          Object.assign(new Error(message), { code: sqlState }),
+          mockReq,
+          mockRes,
+          () => {},
+        );
+
+        expect(capturedStatus).toBe(503);
+        expect((capturedBody as { error: { code: string; message: string } }).error.code).toBe("TRANSACTION_CONFLICT");
+        expect((capturedBody as { error: { message: string } }).error.message).toBe("Transaction conflict, please retry");
+      },
+    );
   });
 });
