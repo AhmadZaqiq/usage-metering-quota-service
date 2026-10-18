@@ -142,18 +142,23 @@ export async function selectPlanByAccountAndName(
   return mapRowToPlanRow(result[0]);
 }
 
+// CON-03: the not-deleted predicate is part of the WHERE clause so a
+// concurrent soft-delete that commits while we wait is re-evaluated under
+// READ COMMITTED (EvalPlanQual) instead of being silently overwritten.
+// Returns null when the row is gone or deleted, so callers fail with 404.
 export async function updatePlan(
   tx: Transaction,
   planId: bigint,
   updates: Record<string, unknown>,
-): Promise<PlanRow> {
+): Promise<PlanRow | null> {
   const result = await tx
     .update(plans)
     .set(updates)
-    .where(eq(plans.id, planId))
+    .where(and(eq(plans.id, planId), isNull(plans.deletedAt)))
     .returning()
     .execute();
 
+  if (result.length === 0) return null;
   return mapRowToPlanRow(result[0]);
 }
 

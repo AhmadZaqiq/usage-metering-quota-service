@@ -13,7 +13,8 @@ import {
   selectUserByAccountAndClientUserId,
   insertUser,
 } from "../infrastructure/repositories/userRepository.js";
-import { createApiKey } from "../application/auth/apiKeyService.js";
+import { createApiKey, revokeApiKey } from "../application/auth/apiKeyService.js";
+import { selectActiveApiKeyByName } from "../infrastructure/repositories/apiKeyRepository.js";
 import { createAssignment } from "../application/plans/assignmentService.js";
 import { createPlan } from "../application/plans/planService.js";
 import { getEnv } from "../config/index.js";
@@ -42,9 +43,18 @@ async function main() {
     accountId = existing.id;
     logger.info({ accountId: accountId.toString() }, "Bootstrap account already exists");
   } else {
-    const account = await insertAccount(db, env.BOOTSTRAP_ACCOUNT_NAME);
-    accountId = account.id;
-    logger.info({ accountId: accountId.toString() }, "Bootstrap account created");
+    try {
+      const account = await insertAccount(db, env.BOOTSTRAP_ACCOUNT_NAME);
+      accountId = account.id;
+      logger.info({ accountId: accountId.toString() }, "Bootstrap account created");
+    } catch (err) {
+      const pgErr = err as { code?: string };
+      if (pgErr.code !== "23505") throw err;
+      const raced = await selectAccountByName(db, env.BOOTSTRAP_ACCOUNT_NAME);
+      if (!raced) throw err;
+      accountId = raced.id;
+      logger.info({ accountId: accountId.toString() }, "Bootstrap account created concurrently; reusing");
+    }
   }
 
   // Create account plan
@@ -100,7 +110,15 @@ async function main() {
   await createAssignment(Number(accountId), { userId: "loadtest-user", planId: userPlanId, effectiveFrom }, Number(accountId));
   logger.info("User plan assigned");
 
-  // Create API key
+  // Create API key: rotate instead of accumulating one key per run. The
+  // load-test script must print a usable secret, and only the first full key
+  // is ever returned at creation time, so a fresh key is minted and any
+  // previous active key with the same name is revoked.
+  const activeKey = await selectActiveApiKeyByName(db, BigInt(accountId), env.BOOTSTRAP_API_KEY_NAME);
+  if (activeKey) {
+    await revokeApiKey(Number(accountId), Number(activeKey.id));
+    logger.info({ prefix: activeKey.prefix }, "Revoked previous load-test API key");
+  }
   const keyResult = await createApiKey(Number(accountId), env.BOOTSTRAP_API_KEY_NAME);
   logger.info({ prefix: keyResult.prefix }, "Bootstrap API key created");
 

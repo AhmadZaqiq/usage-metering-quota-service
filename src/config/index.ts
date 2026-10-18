@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+// Environment values are always strings when loaded from process.env.
+// z.coerce.boolean() would parse the string "false" as true (Boolean("false")),
+// so booleans are restricted to explicit "true"/"false" tokens; anything else
+// fails validation instead of silently enabling a security-sensitive option.
+const BooleanString = z
+  .union([z.boolean(), z.enum(["true", "false"])])
+  .transform((value) => (typeof value === "boolean" ? value : value === "true"));
+
 const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(3000),
@@ -15,7 +23,7 @@ const EnvSchema = z.object({
   BOOTSTRAP_ACCOUNT_NAME: z.string().optional(),
   BOOTSTRAP_API_KEY_NAME: z.string().optional(),
 
-  TRUST_PROXY: z.coerce.boolean().default(false),
+  TRUST_PROXY: BooleanString.default(false),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

@@ -15,21 +15,51 @@ export interface RateLimiterStore {
   close(): Promise<void>;
 }
 
-class MemoryStore implements RateLimiterStore {
+// Bounds the in-memory fallback so attacker-controlled key cardinality
+// (many distinct IPs) cannot grow the map without limit.
+const MEMORY_STORE_MAX_ENTRIES = 10_000;
+
+export class MemoryStore implements RateLimiterStore {
   private hits = new Map<string, { count: number; resetTime: number }>();
 
   async increment(key: string, windowMs: number): Promise<RateLimitInfo> {
     const now = Date.now();
     const entry = this.hits.get(key);
 
-    if (!entry || now > entry.resetTime) {
-      const resetTime = now + windowMs;
-      this.hits.set(key, { count: 1, resetTime });
-      return { total: 1, remaining: 0, resetTime };
+    if (entry && now <= entry.resetTime) {
+      entry.count++;
+      return { total: entry.count, remaining: Math.max(0, entry.count - 1), resetTime: entry.resetTime };
     }
 
-    entry.count++;
-    return { total: entry.count, remaining: Math.max(0, entry.count - 1), resetTime: entry.resetTime };
+    if (entry) {
+      // Refresh an expired key: move it to the end of insertion order.
+      this.hits.delete(key);
+    } else if (this.hits.size >= MEMORY_STORE_MAX_ENTRIES) {
+      this.evict();
+    }
+
+    const resetTime = now + windowMs;
+    this.hits.set(key, { count: 1, resetTime });
+    return { total: 1, remaining: 0, resetTime };
+  }
+
+  private evict(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.hits) {
+      if (now > entry.resetTime) {
+        this.hits.delete(key);
+      }
+    }
+    // Still full: drop oldest entries (Map preserves insertion order).
+    while (this.hits.size >= MEMORY_STORE_MAX_ENTRIES) {
+      const oldest = this.hits.keys().next().value;
+      if (oldest === undefined) break;
+      this.hits.delete(oldest);
+    }
+  }
+
+  get size(): number {
+    return this.hits.size;
   }
 
   async reset(key: string): Promise<void> {
@@ -80,10 +110,13 @@ class RedisStore implements RateLimiterStore {
       throw new Error("Redis multi exec returned null");
     }
 
+    const err = results[0][0];
+    if (err) {
+      throw err;
+    }
     const total = results[0][1] as number;
-    const remaining = Math.max(0, total - 1);
 
-    return { total, remaining, resetTime };
+    return { total, remaining: Math.max(0, total - 1), resetTime };
   }
 
   async reset(key: string): Promise<void> {
@@ -96,67 +129,150 @@ class RedisStore implements RateLimiterStore {
   }
 }
 
-let storeInstance: RateLimiterStore | null = null;
+let redisStore: RedisStore | null = null;
+let redisUsable = false;
+let memoryStore: MemoryStore | null = null;
+let redisCloseLogged = false;
 
+function getMemoryStore(): MemoryStore {
+  if (!memoryStore) {
+    memoryStore = new MemoryStore();
+  }
+  return memoryStore;
+}
+
+function ensureRedisStore(redisUrl: string): RedisStore {
+  if (!redisStore) {
+    const store = new RedisStore(redisUrl);
+    redisStore = store;
+    store
+      .connect()
+      .then(() => {
+        redisUsable = true;
+        logger.info("Redis rate limiter connected");
+      })
+      .catch((err: Error) => {
+        redisUsable = false;
+        logger.error({ err }, "Failed to connect to Redis for rate limiting, using in-process memory store");
+      });
+  }
+  return redisStore;
+}
+
+function markRedisUnusable(err: Error): void {
+  if (redisUsable || !redisCloseLogged) {
+    logger.error({ err }, "Redis rate limiter failed at runtime, switching to in-process memory store");
+  }
+  redisUsable = false;
+  redisCloseLogged = true;
+}
+
+/**
+ * Returns the store that should currently own the counters.
+ * Policy: Redis when configured and healthy, otherwise an in-process
+ * bounded MemoryStore. The limiter never silently disables itself.
+ */
 export function getRateLimiterStore(): RateLimiterStore {
-  if (storeInstance) return storeInstance;
-
   const env = getEnv();
 
   if (env.REDIS_URL) {
-    const store = new RedisStore(env.REDIS_URL);
-    store.connect().catch((err: Error) => {
-      logger.error({ err }, "Failed to connect to Redis for rate limiting, falling back to memory store");
-      storeInstance = new MemoryStore();
-    });
-    storeInstance = store;
-  } else {
-    storeInstance = new MemoryStore();
+    const store = ensureRedisStore(env.REDIS_URL);
+    if (redisUsable) {
+      return store;
+    }
+    return getMemoryStore();
   }
 
-  return storeInstance;
+  return getMemoryStore();
 }
 
-export function createRateLimiterMiddleware() {
+async function incrementWithFallback(key: string, windowMs: number): Promise<RateLimitInfo> {
   const store = getRateLimiterStore();
+  try {
+    return await store.increment(key, windowMs);
+  } catch (err) {
+    // Primary store failed mid-request: mark it unusable and count this
+    // request in the in-process fallback so the limit still applies.
+    markRedisUnusable(err as Error);
+    return await getMemoryStore().increment(key, windowMs);
+  }
+}
+
+function applyHeaders(res: Response, info: RateLimitInfo, max: number): void {
+  res.setHeader("X-RateLimit-Limit", max.toString());
+  res.setHeader("X-RateLimit-Remaining", Math.max(0, max - info.total).toString());
+  res.setHeader("X-RateLimit-Reset", Math.ceil(info.resetTime / 1000).toString());
+}
+
+function tooManyRequests(res: Response): void {
+  res.status(429).json({
+    error: { code: "RATE_LIMITED", message: "Too many requests" },
+  });
+}
+
+/**
+ * Pre-authentication layer: keyed strictly by client IP.
+ * Never trusts the Authorization header — an unverified Bearer prefix is
+ * client-controlled and must not be able to mint unlimited buckets.
+ */
+export function createIpRateLimiterMiddleware() {
   const env = getEnv();
 
   return async (req: Request, res: Response, next: NextFunction) => {
-    const authHeader = req.headers.authorization;
-    let key: string;
-
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      const fullKey = authHeader.slice(7);
-      const prefix = fullKey.split(".")[0];
-      key = `key:${prefix}`;
-    } else {
-      key = `ip:${req.ip}`;
-    }
-
+    const key = `ip:${req.ip}`;
     try {
-      const info = await store.increment(key, env.RATE_LIMIT_WINDOW_MS);
-
-      res.setHeader("X-RateLimit-Limit", env.RATE_LIMIT_MAX.toString());
-      res.setHeader("X-RateLimit-Remaining", info.remaining.toString());
-      res.setHeader("X-RateLimit-Reset", Math.ceil(info.resetTime / 1000).toString());
-
+      const info = await incrementWithFallback(key, env.RATE_LIMIT_WINDOW_MS);
+      applyHeaders(res, info, env.RATE_LIMIT_MAX);
       if (info.total > env.RATE_LIMIT_MAX) {
-        return res.status(429).json({
-          error: { code: "RATE_LIMITED", message: "Too many requests" },
-        });
+        return tooManyRequests(res);
       }
-
       next();
     } catch (err) {
-      logger.error({ err, key }, "Rate limiter error, allowing request");
-      next();
+      // Last-resort failure (even the memory store failed): fail closed.
+      // Silently allowing the request would disable the limiter entirely.
+      logger.error({ err, key }, "Rate limiter failed, rejecting request");
+      return tooManyRequests(res);
     }
   };
 }
 
+/**
+ * Post-authentication layer: keyed by the verified API-key identity so
+ * tenants are isolated from each other. Only mounted after authMiddleware.
+ */
+export function createIdentityRateLimiterMiddleware() {
+  const env = getEnv();
+
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const key = req.apiKeyId !== undefined ? `key:${req.apiKeyId}` : `ip:${req.ip}`;
+    try {
+      const info = await incrementWithFallback(key, env.RATE_LIMIT_WINDOW_MS);
+      applyHeaders(res, info, env.RATE_LIMIT_MAX);
+      if (info.total > env.RATE_LIMIT_MAX) {
+        return tooManyRequests(res);
+      }
+      next();
+    } catch (err) {
+      logger.error({ err, key }, "Rate limiter failed, rejecting request");
+      return tooManyRequests(res);
+    }
+  };
+}
+
+/** @deprecated Kept for compatibility; equivalent to the IP-based layer. */
+export const createRateLimiterMiddleware = createIpRateLimiterMiddleware;
+
 export async function closeRateLimiterStore(): Promise<void> {
-  if (storeInstance) {
-    await storeInstance.close();
-    storeInstance = null;
+  const closers: Promise<void>[] = [];
+  if (redisStore) {
+    closers.push(redisStore.close().catch(() => undefined));
+    redisStore = null;
+    redisUsable = false;
+    redisCloseLogged = false;
   }
+  if (memoryStore) {
+    closers.push(memoryStore.close());
+    memoryStore = null;
+  }
+  await Promise.all(closers);
 }

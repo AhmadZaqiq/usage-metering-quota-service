@@ -1,7 +1,6 @@
 import { db } from "../../db/client.js";
 import { listAssignmentsWithPlan, getCurrentAssignmentsWithPlan } from "../../infrastructure/repositories/assignmentRepository.js";
 import type { AssignmentInfo } from "./assignmentService.js";
-import { formatDateForDb } from "../../domain/date.js";
 
 export async function listAssignments(accountId: number): Promise<AssignmentInfo[]> {
   const results = await listAssignmentsWithPlan(db, BigInt(accountId));
@@ -31,8 +30,9 @@ function mapAssignmentWithPlan(r: { id: bigint; accountId: bigint; userId: bigin
     planId: Number(r.planId),
     planName: r.planName,
     planType: r.planType as "account" | "user",
-    effectiveFrom: formatDateForDb(r.effectiveFrom),
-    effectiveTo: r.effectiveTo ? formatDateForDb(r.effectiveTo) : null,
+    // BR-14: ISO-8601 instants for interval precision (see assignmentService).
+    effectiveFrom: r.effectiveFrom.toISOString(),
+    effectiveTo: r.effectiveTo ? r.effectiveTo.toISOString() : null,
     createdAt: r.createdAt,
     isCurrent: r.isCurrent,
   };

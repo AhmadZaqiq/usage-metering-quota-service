@@ -1,7 +1,6 @@
 import { withTransaction, type Transaction } from "../../db/client.js";
 import {
   selectUserByAccountAndClientUserId,
-  selectPlanByCriteria,
   selectPlanByCriteriaForUpdate,
   selectCurrentAssignmentByAccountForUpdate,
   selectCurrentAssignmentByUserForUpdate,
@@ -14,7 +13,7 @@ import {
 } from "../../infrastructure/repositories/assignmentRepository.js";
 import type { PlanAssignmentRow } from "../../infrastructure/repositories/assignmentRepository.js";
 import { NotFoundError, AuthorizationError, ValidationError, ConflictError } from "../../errors/AppError.js";
-import { getNextUtcMonthStart, formatDateForDb } from "../../domain/date.js";
+import { getNextUtcMonthStart } from "../../domain/date.js";
 
 export interface AssignmentInfo {
   id: number;
@@ -98,7 +97,6 @@ async function createAssignmentImpl(
   }
 
   const now = new Date();
-  const nextMonthStartDate = new Date(getNextUtcMonthStart(now));
 
   // Lock and load the full assignment timeline for this subject:
   // - current: effective right now
@@ -114,13 +112,24 @@ async function createAssignmentImpl(
     pending = await selectPendingAssignmentsByUserForUpdate(tx, userId!, now);
   }
 
+  // BR-13: re-read the clock after the row locks above. Lock waits can last
+  // for seconds under contention; stamping effectiveFrom with a pre-wait
+  // timestamp would backdate an "immediate" change into the past.
+  const nowAfterLocks = new Date();
+  const nextMonthStartAfterLocks = new Date(getNextUtcMonthStart(nowAfterLocks));
+
   // Classify against the currently effective plan. Fail closed if the current
   // assignment points at a plan that is no longer resolvable (deleted/inactive):
   // applying an unclassified change could silently skip the downgrade path.
   let isDowngrade = false;
 
   if (current) {
-    const currentPlan = await selectPlanByCriteria(tx, current.planId);
+    // CON-04: lock the currently effective plan row while classifying against
+    // its allowance, so a concurrent allowance update cannot flip the
+    // upgrade/downgrade decision mid-flight. Deadlocks (opposite lock order
+    // across different subjects) surface as 40P01 and are retried by
+    // withTransaction; a plan deleted while waiting yields null and fails closed.
+    const currentPlan = await selectPlanByCriteriaForUpdate(tx, current.planId);
 
     if (!currentPlan) {
       throw new ConflictError("Current assigned plan is no longer available");
@@ -135,8 +144,8 @@ async function createAssignmentImpl(
   // When a current assignment exists, upgrades/same-tier changes take effect
   // immediately (now) and downgrades at the next UTC month start.
   const assignmentEffectiveFrom = current
-    ? (isDowngrade ? nextMonthStartDate : now)
-    : new Date(input.effectiveFrom ?? now);
+    ? (isDowngrade ? nextMonthStartAfterLocks : nowAfterLocks)
+    : new Date(input.effectiveFrom ?? nowAfterLocks);
 
   // Supersede any pending (future) assignments before inserting the new row.
   // Close each at its own effective_from (zero-width/empty range). That clears
@@ -153,7 +162,7 @@ async function createAssignmentImpl(
     await updateAssignmentEffectiveTo(
       tx,
       current.id,
-      isDowngrade ? nextMonthStartDate : assignmentEffectiveFrom,
+      isDowngrade ? nextMonthStartAfterLocks : assignmentEffectiveFrom,
     );
   }
 
@@ -189,7 +198,7 @@ async function createAssignmentImpl(
     null,
   );
 
-  return mapAssignment(assignment, plan.name, plan.type as "account" | "user", now);
+  return mapAssignment(assignment, plan.name, plan.type as "account" | "user", nowAfterLocks);
 }
 
 function mapAssignment(
@@ -205,8 +214,11 @@ function mapAssignment(
     planId: Number(a.planId),
     planName,
     planType,
-    effectiveFrom: formatDateForDb(a.effectiveFrom),
-    effectiveTo: a.effectiveTo ? formatDateForDb(a.effectiveTo) : null,
+    // BR-14: full ISO-8601 instants, not date-only strings — effective_from
+    // carries a time component (immediate upgrades stamp `now`) and clients
+    // must be able to order intervals precisely.
+    effectiveFrom: a.effectiveFrom.toISOString(),
+    effectiveTo: a.effectiveTo ? a.effectiveTo.toISOString() : null,
     createdAt: a.createdAt,
     isCurrent:
       a.effectiveFrom <= at &&

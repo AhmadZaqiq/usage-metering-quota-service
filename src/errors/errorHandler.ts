@@ -5,7 +5,10 @@ import { AppError } from "./AppError.js";
 import { logger } from "../logging/logger.js";
 
 export function errorHandler(err: Error, req: Request, res: Response, _next: NextFunction) {
-  const requestId = (res.getHeader("X-Request-Id") as string) || "unknown";
+  const requestId =
+    (req.headers?.["x-request-id"] as string | undefined) ||
+    (res.getHeader("X-Request-Id") as string | undefined) ||
+    "unknown";
 
   if (err instanceof ZodError) {
     const details = err.flatten().fieldErrors;
@@ -80,6 +83,19 @@ function handlePostgresError(err: { code: string; constraint?: string }, res: Re
     case "23514": // check_violation
       return res.status(400).json({
         error: { code: "VALIDATION_ERROR", message: "Value violates constraint" },
+      });
+    case "22003": // numeric_value_out_of_range
+      return res.status(400).json({
+        error: { code: "VALIDATION_ERROR", message: "Numeric value out of range" },
+      });
+    case "22023": // invalid_text_representation
+      return res.status(400).json({
+        error: { code: "VALIDATION_ERROR", message: "Invalid value format" },
+      });
+    case "P0001": // raise_exception: application-defined rule failures are
+      // business conflicts, not infrastructure faults (BR-20).
+      return res.status(409).json({
+        error: { code: "CONFLICT", message: "Operation conflicts with current state" },
       });
     case "40P01": // deadlock_detected
     case "40001": // serialization_failure

@@ -134,8 +134,10 @@ export async function getUsageHistory(
     decision: row.decision,
     rejectionReason: row.rejectionReason,
     periodStart: row.periodStart,
-    accountRemaining: row.accountRemaining ? row.accountRemaining.toString() : null,
-    userRemaining: row.userRemaining ? row.userRemaining.toString() : null,
+    // Explicit null checks: bigint 0n is falsy but is a real value (quota
+    // fully consumed), not a missing one.
+    accountRemaining: row.accountRemaining !== null ? row.accountRemaining.toString() : null,
+    userRemaining: row.userRemaining !== null ? row.userRemaining.toString() : null,
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
   }));
 

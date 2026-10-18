@@ -7,7 +7,7 @@ import { createPlan, updatePlan, deletePlan } from "../application/plans/planSer
 import { createAssignment } from "../application/plans/assignmentService.js";
 import { getCurrentAssignments } from "../application/plans/assignmentHistoryService.js";
 import { processUsageRequest } from "../application/usage/usageService.js";
-import { formatDateForDb, getUtcMonthStart } from "../domain/date.js";
+import { getUtcMonthStart } from "../domain/date.js";
 import { MAX_UNITS_PER_REQUEST_BIGINT } from "../config/index.js";
 import type { PoolClient } from "pg";
 
@@ -245,7 +245,12 @@ describe("Assignment policy (upgrade supersession, pending uniqueness)", () => {
 
       expect(assignment.isCurrent).toBe(true);
       expect(assignment.planId).toBe(upgradePlan.id);
-      expect(assignment.effectiveFrom).toBe(formatDateForDb(new Date()));
+      // BR-14: effectiveFrom is a full ISO instant stamped at execution time
+      // (after locks), never the client's past date.
+      const effectiveFrom = new Date(assignment.effectiveFrom);
+      expect(effectiveFrom.toISOString()).toBe(assignment.effectiveFrom);
+      expect(effectiveFrom.getTime()).toBeGreaterThanOrEqual(Date.now() - 60_000);
+      expect(effectiveFrom.getTime()).toBeLessThanOrEqual(Date.now() + 1_000);
     });
 
     it("first assignment still honors past effectiveFrom (bootstrap style)", async () => {
@@ -259,7 +264,7 @@ describe("Assignment policy (upgrade supersession, pending uniqueness)", () => {
         account.id
       );
 
-      expect(assignment.effectiveFrom).toBe(formatDateForDb(monthStart));
+      expect(assignment.effectiveFrom).toBe(monthStart.toISOString());
       expect(assignment.isCurrent).toBe(true);
     });
 
@@ -394,6 +399,31 @@ describe("Assignment policy (upgrade supersession, pending uniqueness)", () => {
       return new Promise((resolve) => setTimeout(resolve, ms));
     }
 
+    // Polls pg_stat_activity until at least `min` backends are blocked on a
+    // row lock whose statement matches `pattern`. This proves the concurrent
+    // transaction is genuinely waiting, instead of trusting that a fixed
+    // sleep was long enough for it to reach the lock.
+    async function waitForWaiters(pattern: string, min = 1, timeoutMs = 15000): Promise<number> {
+      const deadline = Date.now() + timeoutMs;
+      let seen = 0;
+      while (Date.now() < deadline) {
+        const res = await getTestPool().query(
+          `SELECT count(*)::int AS n
+             FROM pg_stat_activity
+            WHERE wait_event_type = 'Lock'
+              AND pid <> pg_backend_pid()
+              AND query ILIKE $1`,
+          [`%${pattern}%`]
+        );
+        seen = res.rows[0].n as number;
+        if (seen >= min) return seen;
+        await sleep(25);
+      }
+      throw new Error(
+        `timed out waiting for ${min} lock waiter(s) matching ${JSON.stringify(pattern)} (last saw ${seen})`
+      );
+    }
+
     async function getPlanRow(planId: number) {
       const [row] = await getTestDb()
         .select()
@@ -422,8 +452,8 @@ describe("Assignment policy (upgrade supersession, pending uniqueness)", () => {
         const assignPromise = createAssignment(account.id, { planId: plan.id }, account.id);
         const deletePromise = deletePlan(plan.id, account.id);
 
-        // Both should now be waiting on the blocker lock.
-        await sleep(150);
+        // Both must be waiting on the blocker lock before we release it.
+        await waitForWaiters("FOR UPDATE", 2);
         await blocker.query("COMMIT");
 
         return Promise.allSettled([assignPromise, deletePromise]);
@@ -468,7 +498,9 @@ describe("Assignment policy (upgrade supersession, pending uniqueness)", () => {
       // instead of returning the stale pre-delete version.
       await withLockedPlan(plan.id, async (blocker) => {
         const assignPromise = createAssignment(account.id, { planId: plan.id }, account.id);
-        await sleep(150);
+        // The assign transaction must be waiting on the plan row lock before
+        // the mutation below, so the EPQ re-check actually happens.
+        await waitForWaiters("FOR UPDATE", 1);
 
         await blocker.query(
           "UPDATE plans SET is_active = false, deleted_at = now() WHERE id = $1",
@@ -491,7 +523,7 @@ describe("Assignment policy (upgrade supersession, pending uniqueness)", () => {
 
       await withLockedPlan(plan.id, async (blocker) => {
         const assignPromise = createAssignment(account.id, { planId: plan.id }, account.id);
-        await sleep(150);
+        await waitForWaiters("FOR UPDATE", 1);
 
         // Same row update deactivate performs; is_active flips while assign waits.
         await blocker.query("UPDATE plans SET is_active = false WHERE id = $1", [plan.id]);
@@ -514,7 +546,7 @@ describe("Assignment policy (upgrade supersession, pending uniqueness)", () => {
       // Still hold the plan lock across the assign to prove FOR UPDATE path works.
       await withLockedPlan(plan.id, async (blocker) => {
         const assignPromise = createAssignment(account.id, { planId: plan.id }, account.id);
-        await sleep(100);
+        await waitForWaiters("FOR UPDATE", 1);
         await blocker.query("COMMIT");
         await assignPromise;
       });
@@ -543,7 +575,7 @@ describe("Assignment policy (upgrade supersession, pending uniqueness)", () => {
       // after delete commits and must re-validate (plan gone).
       await withLockedPlan(plan.id, async (blocker) => {
         const deletePromise = deletePlan(plan.id, account.id);
-        await sleep(100);
+        await waitForWaiters("FOR UPDATE", 1);
         await blocker.query("COMMIT");
         await deletePromise;
       });
@@ -565,7 +597,7 @@ describe("Assignment policy (upgrade supersession, pending uniqueness)", () => {
         const assignPromise = createAssignment(account.id, { planId: plan.id }, account.id);
         const deactivatePromise = updatePlan(plan.id, { isActive: false }, account.id);
 
-        await sleep(150);
+        await waitForWaiters("FOR UPDATE", 2);
         await blocker.query("COMMIT");
 
         return Promise.allSettled([assignPromise, deactivatePromise]);
@@ -589,6 +621,66 @@ describe("Assignment policy (upgrade supersession, pending uniqueness)", () => {
         expect(planRow.isActive).toBe(true);
         expect(assignmentCount).toBe(1);
       }
+    }, 30000);
+
+    it("BR-13: effectiveFrom is stamped after the assignment-row lock wait, never backdated", async () => {
+      const { account } = await setupAccountContext();
+      const higherPlan = await createTestPlan(account.id, "Post Lock Upgrade", "account", 5000n, MAX_UNITS_PER_REQUEST_BIGINT);
+
+      const blocker = await getTestPool().connect();
+      await blocker.query("BEGIN");
+      await blocker.query(
+        "SELECT id FROM plan_assignments WHERE account_id = $1 AND user_id IS NULL FOR UPDATE",
+        [account.id]
+      );
+
+      try {
+        const assignPromise = createAssignment(account.id, { planId: higherPlan.id }, account.id);
+
+        // The assign transaction must be blocked on our row lock before we
+        // measure the release time — otherwise the test proves nothing.
+        await waitForWaiters("FOR UPDATE", 1);
+
+        await sleep(100); // push wall-clock forward so a pre-wait stamp would differ
+        const releasedAt = Date.now();
+        await blocker.query("COMMIT");
+
+        const assignment = await assignPromise;
+
+        // Upgrade takes effect immediately: stamped with a clock read AFTER
+        // the lock was acquired (now >= release), not the `now` captured
+        // before the wait (which would be < releasedAt = the BR-13 bug).
+        expect(new Date(assignment.effectiveFrom).getTime()).toBeGreaterThanOrEqual(releasedAt);
+        expect(assignment.isCurrent).toBe(true);
+        expect(assignment.planId).toBe(higherPlan.id);
+      } finally {
+        try {
+          await blocker.query("ROLLBACK");
+        } catch {
+          // already committed above
+        }
+        blocker.release();
+      }
+    }, 30000);
+
+    it("CON-04: classification locks the current plan row before comparing allowances", async () => {
+      const { account, basePlan } = await setupAccountContext();
+      const targetPlan = await createTestPlan(account.id, "Concurrent Allowance Target", "account", 2000n, MAX_UNITS_PER_REQUEST_BIGINT);
+
+      await withLockedPlan(basePlan.id, async (blocker) => {
+        const assignPromise = createAssignment(account.id, { planId: targetPlan.id }, account.id);
+
+        // Pre-fix this read was a plain SELECT: no wait, timeout here.
+        // Post-fix the current plan row is locked FOR UPDATE while the
+        // upgrade/downgrade decision compares allowances.
+        await waitForWaiters("FOR UPDATE", 1, 10000);
+
+        await blocker.query("COMMIT");
+        const assignment = await assignPromise;
+
+        expect(assignment.planId).toBe(targetPlan.id);
+        expect(assignment.isCurrent).toBe(true);
+      });
     }, 30000);
 
     function rejectionMessage(result: PromiseSettledResult<unknown>): string {

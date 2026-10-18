@@ -4,7 +4,7 @@ import { evaluateQuota, type RejectionReason } from "../../domain/quotaEvaluator
 import { upsertAndLockCounter, incrementCounter, type CounterRow } from "../../infrastructure/repositories/counterRepository.js";
 import { computeRequestHash, type RequestFingerprint } from "../../domain/idempotency.js";
 import { formatDateForDb, getUtcMonthStart } from "../../domain/date.js";
-import { NotFoundError, BusinessError, ConflictError, ValidationError } from "../../errors/AppError.js";
+import { NotFoundError, ConflictError, ValidationError } from "../../errors/AppError.js";
 import { findUsageRequestByKey, insertUsageRequest, type UsageRequestRow } from "../../infrastructure/repositories/usageRequestRepository.js";
 import { selectUserByAccountAndClientUserId } from "../../infrastructure/repositories/userRepository.js";
 import { selectCurrentAssignmentByAccount, selectCurrentAssignmentByUser, selectPlanByCriteria } from "../../infrastructure/repositories/assignmentRepository.js";
@@ -95,7 +95,15 @@ export async function processUsageRequest(
     const userPlanResult = userAssignment ? await selectPlanByCriteria(tx, userAssignment.planId) : null;
 
     if (!accountPlanResult) {
-      throw new BusinessError("No active account plan assigned");
+      // Missing plan configuration is a state conflict (409), not a client
+      // input error; failing closed also prevents consuming without policy.
+      throw new ConflictError("No active account plan assigned");
+    }
+
+    // Fail closed for user-scoped requests: a user without an effective user
+    // plan must not silently fall back to account-only quota (fail-open).
+    if (userId !== null && (!userAssignment || !userPlanResult)) {
+      throw new ConflictError("No active user plan assigned for user");
     }
 
     const accountPlanQuota = {

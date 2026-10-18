@@ -145,6 +145,12 @@ export async function updatePlan(
 
     const updated = await updatePlanRow(tx, BigInt(planId), updates);
 
+    if (!updated) {
+      // Plan was soft-deleted after our initial read; the repository's
+      // deleted-aware WHERE clause rejected the stale write (CON-03).
+      throw new NotFoundError("Plan not found");
+    }
+
     return mapPlan(updated);
   });
 }

@@ -1,5 +1,4 @@
-import { pgTable, bigserial, varchar, boolean, timestamp, bigint, uniqueIndex, index } from "drizzle-orm/pg-core";
-import { sql } from "drizzle-orm";
+import { pgTable, bigserial, varchar, boolean, timestamp, bigint, uniqueIndex } from "drizzle-orm/pg-core";
 import { accounts } from "./accounts.js";
 
 export const users = pgTable(
@@ -17,8 +16,12 @@ export const users = pgTable(
   },
   (table) => ({
     accountClientUserUnique: uniqueIndex("uq_users_account_client_user").on(table.accountId, table.clientUserId),
+    // Companion unique index for the composite tenant FKs declared in
+    // src/db/sql/0004_integrity_fixes.sql (usage_counters/usage_requests/
+    // plan_assignments -> users(account_id, id)).
     accountIdIdUnique: uniqueIndex("uq_users_account_id_id").on(table.accountId, table.id),
-    accountIdx: index("idx_users_account").on(table.accountId).where(sql`${table.deletedAt} IS NULL`),
+    // NOTE: idx_users_account was dropped as redundant (covered by
+    // uq_users_account_client_user).
   })
 );
 

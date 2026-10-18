@@ -29,7 +29,7 @@ export async function selectAccountByName(
   const result = await tx.execute(sql`
     SELECT id, name, is_active, created_at, updated_at, deleted_at
     FROM accounts
-    WHERE name = ${name}
+    WHERE name = ${name} AND deleted_at IS NULL
     LIMIT 1
   `);
 

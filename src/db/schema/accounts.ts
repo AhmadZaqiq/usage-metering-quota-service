@@ -1,4 +1,4 @@
-import { pgTable, bigserial, varchar, boolean, timestamp, index } from "drizzle-orm/pg-core";
+import { pgTable, bigserial, varchar, boolean, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export const accounts = pgTable(
@@ -12,7 +12,9 @@ export const accounts = pgTable(
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (table) => ({
-    activeIdx: index("idx_accounts_active").on(table.id).where(sql`${table.isActive} = true AND ${table.deletedAt} IS NULL`),
+    // Live names must be unique so concurrent bootstraps cannot duplicate
+    // the bootstrap account. Soft-deleted names are reusable.
+    nameUnique: uniqueIndex("uq_accounts_name").on(table.name).where(sql`${table.deletedAt} IS NULL`),
   })
 );
 
