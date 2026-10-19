@@ -231,7 +231,7 @@ Presentation: HTTP Response (200 accepted/rejected, 409 conflict, etc.)
 | Concurrent different keys, last units | Counter lock serializes; exactly N accepted for N remaining |
 | Concurrent first counter creation | Atomic upsert creates once; both get locked row |
 | Deadlock | Retry with backoff (3×) on `40P01` / `40001`, logged per retry |
-| Month boundary crossing | Period computed once before transaction |
+| Month boundary crossing | Period-independent `accounts` row lock (`FOR UPDATE`) acquired first; admission timestamp then sampled from DB `clock_timestamp()` after the lock is granted; period and persisted `created_at` derive from that single timestamp |
 | Assign vs plan delete/deactivate | Plan row locked `FOR UPDATE`; waiter re-checks `deleted_at`/`is_active` (EvalPlanQual) and fails instead of using a stale row |
 | Concurrent plan changes to the same subject | Subject assignment rows locked `FOR UPDATE` + exclusion constraints; a later change closes/supersedes earlier rows; exactly one open-ended current row survives |
 | Lock wait backdating `effectiveFrom` | Clock re-read after locks acquired before stamping (BR-13) |

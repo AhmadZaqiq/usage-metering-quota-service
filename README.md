@@ -65,7 +65,7 @@ graph TD
 
 ### Key Design Decisions
 
-- **Seeded System Plans**: `bootstrap.ts` idempotently seeds a shared, ownerless catalog (Starter and Pro as account plans; Basic and Premium as user plans) on every run, using the `uq_system_plans` unique violation to make concurrent seeding safe. A fresh account is assigned **Starter** by default; accounts that already have a current assignment are left untouched. Because system plans have a `NULL` owner, `planService` rejects any attempt to modify or delete them (`403`), so the shared catalog is read-only for every tenant while custom plans remain fully manageable
+- **Seeded System Plans**: `bootstrap.ts` idempotently seeds a shared, ownerless catalog (Starter and Pro as account plans; Basic and Premium as user plans) on every run, using the `uq_system_plans` unique violation to make concurrent seeding safe. Seeded values are required exact values (`monthly_allowance` / `max_units_per_request`), enforced by `bootstrap.test.ts`: **Starter 10000/100 · Pro 1000000/1000 · Basic 500/20 · Premium 5000/200**. A fresh account is assigned **Starter** by default; accounts that already have a current assignment are left untouched. Because system plans have a `NULL` owner, `planService` rejects any attempt to modify or delete them (`403`), so the shared catalog is read-only for every tenant while custom plans remain fully manageable
 - **Pure Quota Evaluator**: `quotaEvaluator.ts` is a pure function with no DB/HTTP dependencies; remaining balances are clamped at zero (never negative) when an allowance is lowered below already-consumed usage. When a request exceeds a per-request cap, the evaluator also reports *which* cap rejected it (`limitScope`: `global` / `account` / `user`)
 - **Nullable user_id**: `NULL` user_id represents account-level counters (avoids partial index ORM issues; partial unique indexes enforce uniqueness per NULL vs non-NULL)
 - **Idempotency in `usage_requests`**: No separate table; unique constraint on `(account_id, idempotency_key)` + request hash
@@ -150,7 +150,8 @@ It is not persisted, so an idempotent replay of a stored rejection omits it rath
 ## Idempotency & Concurrency
 
 ### Idempotency
-- Client supplies `idempotencyKey` (1-255 chars); `userId` (if present) must be non-empty
+- Client supplies `requestId` (1-255 chars); `idempotencyKey` is accepted as a deprecated alias for backward compatibility, and sending both fields is a `400`; `userId` (if present) must be non-empty
+- `requestId` is the public contract name (request body and history responses); it maps to the unchanged `usage_requests.idempotency_key` storage column. It is unrelated to the `X-Request-Id` correlation header
 - Server computes SHA-256 hash of canonical request: `{ accountId, userId, units }`
 - **Same key + same hash** → returns original decision (no additional quota consumed)
 - **Same key + different hash** → `409 Conflict`
@@ -159,7 +160,8 @@ It is not persisted, so an idempotent replay of a stored rejection omits it rath
 
 ### Concurrency Strategy
 - **Isolation Level**: `READ COMMITTED` (PostgreSQL default)
-- **Usage Lock Order**: Account counter → User counter (consistent ordering prevents deadlocks)
+- **Usage Lock Order**: Accounts row (admission lock) → Account counter → User counter → API-key row (consistent ordering prevents deadlocks)
+- **Month Boundary Policy**: the admission timestamp is sampled from the database clock (`clock_timestamp()`) *after* the account row lock is granted, and the same timestamp produces both the quota `periodStart` and the row's `created_at`. A request queued across a UTC month boundary is therefore charged to the month in which it is admitted, and `period_start` equals the UTC month of `created_at` for every request — there is no pre-lock clock window
 - **Counter Creation**: Atomic `INSERT ... ON CONFLICT DO UPDATE SET counter = counter` (no-op update acquires lock)
 - **Assignment Lock Order**: Target plan row → subject's assignment rows (`FOR UPDATE`); assignment decisions are stamped with a clock read taken *after* the locks are acquired
 - **Assign vs delete/deactivate**: the plan row is locked `FOR UPDATE` for the whole service transaction; a waiter re-evaluates `deleted_at`/`is_active` under READ COMMITTED (EvalPlanQual) and fails with `404`/`409` instead of acting on a stale row
@@ -228,7 +230,7 @@ Plan changes follow an **immediate** model: the new assignment takes effect on t
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | `POST` | `/usage` | Yes | Submit usage request |
-| `GET` | `/usage` | Yes | Usage decision history (paginated: `page`, `limit`) |
+| `GET` | `/usage` | Yes | Usage decision history (paginated: `page`, `limit`; optional `userId` filter — `clientUserId` resolved in the authenticated account, `404` if unknown) |
 
 ### Usage Request
 ```json
@@ -237,9 +239,9 @@ Authorization: Bearer <api_key>
 Content-Type: application/json
 
 {
-  "userId": "ext-user-123",       // optional
-  "units": "5",                    // string-encoded bigint, >0, ≤MAX_UNITS_PER_REQUEST
-  "idempotencyKey": "req-abc-123" // required, 1-255 chars
+  "userId": "ext-user-123",  // optional
+  "units": "5",              // string-encoded bigint, >0, ≤MAX_UNITS_PER_REQUEST
+  "requestId": "req-abc-123" // required, 1-255 chars (idempotencyKey accepted as deprecated alias)
 }
 ```
 
@@ -281,7 +283,7 @@ All errors follow consistent format:
 ```json
 {
   "error": {
-    "code": "VALIDATION_ERROR" | "AUTHENTICATION_FAILED" | "AUTHORIZATION_FAILED" | "NOT_FOUND" | "CONFLICT" | "IDEMPOTENCY_CONFLICT" | "RATE_LIMITED" | "PAYLOAD_TOO_LARGE" | "INTERNAL_ERROR" | "TRANSACTION_CONFLICT",
+    "code": "VALIDATION_ERROR" | "AUTHENTICATION_FAILED" | "AUTHORIZATION_FAILED" | "NOT_FOUND" | "CONFLICT" | "IDEMPOTENCY_CONFLICT" | "RATE_LIMITED" | "PAYLOAD_TOO_LARGE" | "INTERNAL_ERROR" | "TRANSACTION_CONFLICT" | "DATABASE_CAPACITY_EXCEEDED",
     "message": "Human-readable description",
     "details": {}
   }
@@ -300,6 +302,7 @@ All errors follow consistent format:
 | 429 | `RATE_LIMITED` | Rate limit exceeded (per-IP or per-API-key layer); normally includes `Retry-After` and `X-RateLimit-*` headers (the last-resort fail-closed path omits `Retry-After`) |
 | 500 | `INTERNAL_ERROR` | Unexpected server error |
 | 503 | `TRANSACTION_CONFLICT` | Deadlock or serialization failure survived all transaction retries (40P01/40001); safe to retry the request |
+| 503 | `DATABASE_CAPACITY_EXCEEDED` | Connection-pool acquisition timed out before any SQL ran (overload, not a fault); includes `Retry-After: 1`; safe to retry — idempotency keys make retries safe |
 
 ---
 
@@ -353,6 +356,30 @@ Migrations are forward-only and idempotent (advisory-locked), so restarts are sa
 ```bash
 docker compose exec app node dist/scripts/bootstrap.js
 ```
+
+#### Reconciling databases seeded before the exact-value catalog
+
+`ensureSystemPlans` only inserts missing rows (`if (existing) continue`) — it never updates an existing plan. A database seeded with the older allowances keeps those values until an operator reconciles them. The following snippet is **document-only operator guidance**: review and run it deliberately against the target database; it is not part of migrations or bootstrap, and nothing in this repository executes it automatically.
+
+```sql
+UPDATE plans
+SET monthly_allowance = v.allowance,
+    max_units_per_request = v.max_units
+FROM (VALUES
+  ('Starter', 'account', 10000::bigint, 100::bigint),
+  ('Pro',     'account', 1000000::bigint, 1000::bigint),
+  ('Basic',   'user',    500::bigint, 20::bigint),
+  ('Premium', 'user',    5000::bigint, 200::bigint)
+) AS v(name, type, allowance, max_units)
+WHERE plans.owner_account_id IS NULL
+  AND plans.name = v.name
+  AND plans.type = v.type
+  AND plans.deleted_at IS NULL
+  AND (plans.monthly_allowance <> v.allowance
+    OR plans.max_units_per_request <> v.max_units);
+```
+
+The `bootstrap.test.ts` catalog test asserts the exact seeded values on a fresh test database, so a clean install is covered by CI without any reconciliation step.
 
 The bootstrap command outputs the full API key **once** — save it. The `client` service runs the demo CLI against `http://app:3000` using that key:
 
@@ -411,27 +438,33 @@ curl -X POST http://localhost:3000/assignments \
 curl -X POST http://localhost:3000/usage \
   -H "Authorization: Bearer <API_KEY>" \
   -H "Content-Type: application/json" \
-  -d '{"userId": "user123", "units": "5", "idempotencyKey": "req-001"}'
+  -d '{"userId": "user123", "units": "5", "requestId": "req-001"}'
 ```
 
 ### Example Client (Demo CLI)
 
-`src/scripts/client.ts` is an HTTP-only example tenant client with two modes:
+`src/scripts/client.ts` is an HTTP-only example tenant client with four commands:
 
 ```bash
-# Demo walkthrough (default): health gate, 3 fresh demo users on two different
-# user plans (a small plan and a higher "Plus" plan, proving the same units
-# yield different remainings and different accept/reject decisions), accepted
-# usage, user/account/per-request rejections (including the reported
+# demo (default): end-to-end walkthrough — health gate, 3 fresh demo users on
+# two different user plans (a small plan and a higher "Plus" plan, proving the
+# same units yield different remainings and different accept/reject decisions),
+# accepted usage, user/account/per-request rejections (including the reported
 # limitScope), immediate plan changes, idempotent replay, credential + input
 # rejections, and a history check proving rejected requests are preserved.
-# Exit code 0 = all checks passed; the full API key is never printed.
+# Success prints "All demo assertions passed." and exits 0; when DATABASE_URL
+# is set it also verifies accounting invariants and prints "All accounting
+# invariants passed." (skipped with a note when DATABASE_URL is unset).
 npm run client -- -k <API_KEY>            # key from the -k flag (works on the host)
 npm run client                            # falls back to /run/secrets/api-key, which
                                           # exists inside Docker only — on the host, pass -k
 
-# Single request mode
-npm run client -- -n 5 -i req-001 --userId user123 -k <API_KEY>
+# consume: one POST /usage (legacy -n/-i flags still map through)
+npm run client -- consume -n 5 -i req-001 --userId user123 -k <API_KEY>
+
+# usage: GET /usage filtered to one user; history: GET /usage paginated
+npm run client -- usage --userId user123 -k <API_KEY>
+npm run client -- history --page 1 --limit 10 -k <API_KEY>
 
 npm run client -- --help
 ```
@@ -459,6 +492,8 @@ docker compose run --rm client    # target http://app:3000, key from /run/secret
 | `npm test` | Run Vitest suite |
 | `npm run test:watch` | Watch mode for tests |
 | `npm run test:coverage` | Run suite with `@vitest/coverage-v8` |
+| `npm run verify` | Typecheck + lint + build + full test suite |
+| `npm run verify:all` | Everything in `verify`, then the accounting-invariant verifier (needs `DATABASE_URL` pointing at a migrated database) |
 | `npm run db:generate` | Generate Drizzle migration |
 | `npm run db:migrate` | Apply migrations |
 | `npm run db:studio` | Open Drizzle Studio |
@@ -478,7 +513,13 @@ npm test
 npm run test:coverage
 ```
 
-Tests use real PostgreSQL (test database via Docker Compose). No mocks for database behavior. The suite includes unit tests (pure domain), HTTP integration tests through the real Express pipeline (auth, validation, usage decisions, rate limiting), concurrency tests, and direct-SQL constraint proofs. As of the latest run: **21 test files, 204 tests, all passing**.
+Tests use real PostgreSQL (test database via Docker Compose). No mocks for database behavior. The suite includes unit tests (pure domain), HTTP integration tests through the real Express pipeline (auth, validation, usage decisions, rate limiting), concurrency tests, and direct-SQL constraint proofs. As of the latest run: **21 test files, 223 tests, all passing**.
+
+For one command that runs the static checks, build, and suite and then cross-checks counters against the decision log:
+
+```bash
+DATABASE_URL=postgresql://app:app_secret@localhost:5432/usage_metering npm run verify:all
+```
 
 After running the demo or a load test, verify that counters still match the decision log:
 
@@ -489,6 +530,30 @@ npm run verify:invariants
 ```
 
 The script checks account/user counters against accepted usage, non-negative stored remainings, UTC period alignment, tenant pairing, idempotency-key uniqueness, and exits non-zero on any violation.
+
+### Compose Profiles (tests / app-test / loadtest)
+
+Plain `docker compose up -d` is unchanged. Three profile-gated services cover the Docker-native verification and load workflows:
+
+```bash
+# 1. Full test suite inside Docker (build-stage image, dev dependencies,
+#    migrations applied by the test setup itself) against postgres-test:
+docker compose --profile tests run --rm tests
+
+# 2. Disposable app stack on port 3001 with its own database container
+#    (no named volume — pgdata/pgdata_test/bootstrap-secrets are untouched;
+#    the bootstrap key is printed to this container's logs on first start):
+RATE_LIMIT_MAX=10000000 docker compose --profile app-test up -d --build
+curl -f http://localhost:3001/health/ready
+
+# 3. Load test against app-test. loadtest.ts only accepts localhost targets,
+#    so the generator runs with host networking and dials the published
+#    port 3001:
+KEY=$(docker compose exec -T app-test cat /run/secrets/api-key)
+LOADTEST_API_KEY="$KEY" docker compose --profile loadtest run --rm loadtest -d 5 -c 10
+```
+
+> **Shared rate-limit bucket**: `app-test` reuses the `redis` service, and rate-limit keys are `ratelimit:ip:{ip}` with no per-instance namespace. A load test from the host therefore consumes the same per-IP window that the main `app` stack (default `RATE_LIMIT_MAX=100`) enforces — the next request to `app` from the same IP may return `429` for up to one window (`RATE_LIMIT_WINDOW_MS`). Wait out the window or run `docker compose restart app` if you see an unexpected `429` on the main stack right after a load test; per-key limits are unaffected because the two stacks use different API keys.
 
 ### Load Testing
 
@@ -646,7 +711,7 @@ Honest status of items that are deliberately not done:
 2. **`int8` Type Parser (audit DB-08)**: PostgreSQL `BIGINT` values are coerced to native `bigint` at repository mapping boundaries (and via Drizzle `mode: "bigint"`) instead of installing a global `pg` type parser. A global parser would also affect health checks, migrations, and any future raw client usage; the localized approach is explicit and test-covered.
 3. **Single-Instance Rate Limiting**: Without `REDIS_URL`, per-IP/per-key counters are per-process; multi-instance deployments require Redis. Redis failure degrades to a bounded in-process store per instance (still enforced, not shared).
 4. **No Distributed Tracing / Metrics**: Structured logs with request IDs only; no OpenTelemetry or Prometheus.
-5. **Performance Baseline**: Dated measurements of the Compose stack exist ([`docs/performance/2026-10-18-compose.md`](docs/performance/2026-10-18-compose.md) for a 30-second baseline; [`docs/performance/2026-10-18-stress.md`](docs/performance/2026-10-18-stress.md) for the progressive stress campaign 10→1000 connections) but are not re-run for every change; numbers describe a single development machine.
+5. **Performance Baseline**: Dated measurements of the Compose stack exist ([`docs/performance/2026-10-18-compose.md`](docs/performance/2026-10-18-compose.md) for a 30-second baseline; [`docs/performance/2026-10-18-stress.md`](docs/performance/2026-10-18-stress.md) for the progressive stress campaign 10→1000 connections; [`docs/performance/results/extreme-capacity-2026-10-19/REPORT.md`](docs/performance/results/extreme-capacity-2026-10-19/REPORT.md) for the extreme-capacity campaign up to 800 connections) but are not re-run for every change; numbers describe a single development machine and are dated, environment-specific observations — not universal performance guarantees.
 6. **No Independent Security Audit**: The "Security" section describes implemented controls with tests; it is not a substitute for a professional assessment (see portfolio notice above).
 7. **`drizzle-orm` Advisory CVE-2026-39356 (GHSA-gpj5-g38j-94v9, high)**: Affects identifier-escaping (`sql.identifier()` / `.as()`) when untrusted input reaches identifier construction. This codebase builds identifiers only from static schema objects and internal constants (the only `sql.raw()` usage interpolates compile-time conflict-target strings; no `sql.identifier()` calls exist), which the advisory explicitly scopes out of impact. Upgrading `drizzle-orm` 0.33 → 0.45.x is a breaking-change maintenance item scheduled after this milestone, not silently ignored.
 
@@ -684,6 +749,15 @@ Load testing was performed with Autocannon against the Docker Compose stack (app
 After the run the database showed 3,622 accepted / 0 rejected requests and an account counter exactly equal to the accepted sum; the invariant verifier passed for the whole database. Throughput is limited by the per-request transaction (counter lock + decision-log insert + commit); with 10 connections at ~82 ms mean latency, the observed rate matches the latency-bound prediction (≈122 req/s).
 
 Full method, database evidence, and reproduction steps: [`docs/performance/2026-10-18-compose.md`](docs/performance/2026-10-18-compose.md). A longer progressive stress campaign (10→1000 connections, idempotency storm, multi-user contention, invariant checks before/after) is recorded in [`docs/performance/2026-10-18-stress.md`](docs/performance/2026-10-18-stress.md).
+
+### Extreme-Capacity Campaign (2026-10-19)
+
+A separate isolated campaign pushed the same stack to 800 concurrent connections (hot-account ladder, multi-account runs, a 10-minute soak, and recovery stages) with raw autocannon output, counter snapshots, and the reproduction scripts kept alongside the report:
+
+- Report: [`docs/performance/results/extreme-capacity-2026-10-19/REPORT.md`](docs/performance/results/extreme-capacity-2026-10-19/REPORT.md)
+- Machine-readable summary: [`docs/performance/results/extreme-capacity-2026-10-19/summary.json`](docs/performance/results/extreme-capacity-2026-10-19/summary.json)
+
+These measurements are dated (2026-10-19) and specific to that environment (single WSL2 development machine, Compose stack, `synchronous_commit=on`). They characterize that run; they are not universal performance guarantees and are not re-run for every change.
 
 ---
 

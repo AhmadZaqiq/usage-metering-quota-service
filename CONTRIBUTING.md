@@ -51,12 +51,18 @@ npm run format
 # Run tests (requires test database)
 docker compose up -d postgres-test
 npm test
+# Alternative: the same suite inside Docker
+# docker compose --profile tests run --rm tests
 
 # Build production bundle
 npm run build
 
 # All of the above in one command (what CI runs, minus the compose smoke job)
 npm run verify
+
+# Everything above plus the accounting-invariant verifier
+# (needs DATABASE_URL pointing at a migrated database, e.g. the compose dev DB)
+DATABASE_URL=postgresql://app:app_secret@localhost:5432/usage_metering npm run verify:all
 ```
 
 CI (`.github/workflows/ci.yml`) runs the same steps on every push to `main`
