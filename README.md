@@ -214,10 +214,15 @@ npm run client -- simulate -k <API_KEY>
 npm run client -- --help
 ```
 
-Inside Docker Compose the demo runs as its own one-shot service:
+Inside Docker Compose the demo and the simulator run as one-shot services.
+The client service sets `BASE_URL=http://app:3000` in its environment (the
+`-u` flag still takes precedence when you need a different target):
 
 ```bash
-docker compose run --rm client    # target http://app:3000, key from /run/secrets
+docker compose run --rm client               # demo walkthrough — URL from the
+                                              # client service BASE_URL
+docker compose run -i --rm client node dist/cli/index.js simulate
+                                              # interactive simulator — keep stdin attached
 ```
 
 The full API key is never printed; only the public prefix is shown. Exit codes: `0` success, `1` failure.
@@ -337,7 +342,7 @@ src/
 │                                   # commands/ (consume, usage, history, simulate),
 │                                   # demo/ (setup, scenario), simulate/ (menu, setup,
 │                                   # actions, scenarios: 12 guided scenarios)
-└── test/                           # 22 Vitest suites (unit + integration + concurrency)
+└── test/                           # 23 Vitest suites (unit + integration + concurrency)
 docs/
 ├── API.md                          # Endpoint contracts, request/response/error shapes
 ├── ARCHITECTURE.md                 # Layers, schema, invariants, concurrency scenarios, decisions
