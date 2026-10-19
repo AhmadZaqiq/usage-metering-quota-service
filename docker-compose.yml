@@ -76,6 +76,10 @@ services:
     container_name: usage-metering-client
     environment:
       NODE_ENV: development
+      # Enables the invariant step after a successful demo (verify() connects
+      # directly); scoped to the bootstrapped account by name.
+      DATABASE_URL: postgresql://app:app_secret@postgres:5432/usage_metering
+      BOOTSTRAP_ACCOUNT_NAME: "Acme Corp"
     depends_on:
       app:
         condition: service_healthy
@@ -100,6 +104,92 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # Full test suite inside Docker (equivalent to `npm test` on the host).
+  # Runs from the build-stage image (dev dependencies present); the test setup
+  # applies migrations itself, so only TEST_DATABASE_URL is needed.
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: build
+    profiles: ["tests"]
+    # No docker-entrypoint.sh: no secrets volume, no server to run — a plain
+    # root-owned test runner over the disposable postgres-test database.
+    entrypoint: ["npm", "test"]
+    environment:
+      TEST_DATABASE_URL: postgresql://app:app_secret@postgres-test:5432/usage_metering_test
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+
+  # Disposable application stack for smoke tests: its own database container
+  # with no named volume (data dies with the container — pgdata/pgdata_test/
+  # bootstrap-secrets are never touched), its own bootstrap secrets inside the
+  # container, published on port 3001 so it cannot collide with `app`.
+  postgres-app-test:
+    image: postgres:16-alpine
+    container_name: usage-metering-db-app-test
+    profiles: ["app-test"]
+    environment:
+      POSTGRES_DB: usage_metering_app_test
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app_secret
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d usage_metering_app_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: usage-metering-app-test
+    profiles: ["app-test"]
+    environment:
+      DATABASE_URL: postgresql://app:app_secret@postgres-app-test:5432/usage_metering_app_test
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: development
+      PORT: "3000"
+      LOG_LEVEL: debug
+      MAX_UNITS_PER_REQUEST: "10000"
+      RATE_LIMIT_WINDOW_MS: "60000"
+      RATE_LIMIT_MAX: "${RATE_LIMIT_MAX:-100}"
+      BOOTSTRAP_ACCOUNT_NAME: "App Test Account"
+      BOOTSTRAP_API_KEY_NAME: "App Test Key"
+    depends_on:
+      postgres-app-test:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3001:3000"
+    # No volumes: the bootstrap key lives inside the container (logs on first
+    # start), so the shared bootstrap-secrets volume is never clobbered.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # Load generator for the app-test stack. Build-stage image (autocannon is a
+  # dev dependency) and host networking: loadtest.ts refuses non-localhost
+  # targets, so from inside the container it must dial http://localhost:3001
+  # (the published app-test port), not the compose service name.
+  # Start app-test first, then:
+  #   LOADTEST_API_KEY=<key from app-test logs> docker compose --profile loadtest run --rm loadtest
+  loadtest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: build
+    profiles: ["loadtest"]
+    network_mode: host
+    entrypoint: ["node", "dist/scripts/loadtest.js", "-u", "http://localhost:3001"]
+    environment:
+      LOADTEST_API_KEY: "${LOADTEST_API_KEY:-}"
 
 volumes:
   pgdata:
