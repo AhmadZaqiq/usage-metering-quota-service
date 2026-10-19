@@ -441,7 +441,7 @@ curl -X POST http://localhost:3000/usage \
 
 ### Example Client (Demo CLI)
 
-`src/scripts/client.ts` is an HTTP-only example tenant client with four commands:
+`src/cli/` is an HTTP-only example tenant client with four commands:
 
 ```bash
 # demo (default): end-to-end walkthrough — health gate, 3 fresh demo users on
@@ -651,9 +651,15 @@ src/
 ├── scripts/
 │   ├── bootstrap.ts            # Seed system plans, create account + API key, assign Starter
 │   ├── bootstrap-loadtest.ts   # Create load-test account, plans, user, API key
-│   ├── client.ts               # Example CLI client: demo walkthrough + single request
 │   ├── loadtest.ts             # Autocannon load test script
 │   └── verify-invariants.ts    # Accounting invariant checks (counters vs decision log)
+├── cli/                        # Example CLI client (entry: cli/index.ts)
+│   ├── index.ts                # Command dispatch + post-demo invariant step
+│   ├── options.ts              # Arg parsing, help text, key resolution
+│   ├── apiClient.ts            # HTTP requests, auth headers, error normalization
+│   ├── output.ts               # Scenario report (PASS/FAIL checks, summary)
+│   ├── commands/               # consume, usage, history
+│   └── demo/                   # setup (users/plans/probe) + scenario (S1–S8)
 └── test/
     ├── setup.ts                # Test database lifecycle (migrate, truncate)
     ├── utils.ts                # Test helper functions

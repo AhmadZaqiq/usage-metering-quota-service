@@ -22,7 +22,7 @@
     "bootstrap": "tsx src/scripts/bootstrap.ts",
     "bootstrap:loadtest": "tsx src/scripts/bootstrap-loadtest.ts",
     "loadtest": "tsx src/scripts/loadtest.ts",
-    "client": "tsx src/scripts/client.ts",
+    "client": "tsx src/cli/index.ts",
     "verify:invariants": "tsx src/scripts/verify-invariants.ts"
   },
   "keywords": [
