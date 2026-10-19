@@ -1,0 +1,140 @@
+=== STAGE c=10 ===
+  Requests/second: 108.00 (mean)
+  Total requests: 1080
+  p50: 21.00 ms
+  p90: 274.00 ms
+  p99: 545.00 ms
+  max: 977.00 ms
+  mean: 91.12 ms
+  stddev: 125.05 ms
+  Data throughput: 0.057 MB/s (mean)
+  Errors: 0
+  Timeouts: 0
+  Non-2xx: 0
+  p50: 21.00 ms
+  p75: 127.00 ms
+  p90: 274.00 ms
+  p97_5: 423.00 ms
+  p99: 545.00 ms
+  p99_9: 953.00 ms
+  exit=0
+=== STAGE c=25 ===
+  Requests/second: 108.50 (mean)
+  Total requests: 1085
+  p50: 70.00 ms
+  p90: 574.00 ms
+  p99: 1254.00 ms
+  max: 2264.00 ms
+  mean: 221.78 ms
+  stddev: 277.91 ms
+  Data throughput: 0.057 MB/s (mean)
+  Errors: 0
+  Timeouts: 0
+  Non-2xx: 0
+  p50: 70.00 ms
+  p75: 317.00 ms
+  p90: 574.00 ms
+  p97_5: 1027.00 ms
+  p99: 1254.00 ms
+  p99_9: 2219.00 ms
+  exit=0
+=== STAGE c=50 ===
+  Requests/second: 114.40 (mean)
+  Total requests: 1144
+  p50: 293.00 ms
+  p90: 775.00 ms
+  p99: 1531.00 ms
+  max: 2143.00 ms
+  mean: 424.36 ms
+  stddev: 268.82 ms
+  Data throughput: 0.060 MB/s (mean)
+  Errors: 0
+  Timeouts: 0
+  Non-2xx: 0
+  p50: 293.00 ms
+  p75: 507.00 ms
+  p90: 775.00 ms
+  p97_5: 1147.00 ms
+  p99: 1531.00 ms
+  p99_9: 2085.00 ms
+  exit=0
+=== STAGE c=200 ===
+  Requests/second: 114.84 (mean)
+  Total requests: 1378
+  p50: 1584.00 ms
+  p90: 2008.00 ms
+  p99: 2650.00 ms
+  max: 3317.00 ms
+  mean: 1624.21 ms
+  stddev: 354.04 ms
+  Data throughput: 0.060 MB/s (mean)
+  Errors: 0
+  Timeouts: 0
+  Non-2xx: 0
+  p50: 1584.00 ms
+  p75: 1784.00 ms
+  p90: 2008.00 ms
+  p97_5: 2389.00 ms
+  p99: 2650.00 ms
+  p99_9: 3238.00 ms
+  exit=0
+=== STAGE c=500 ===
+  Requests/second: 109.75 (mean)
+  Total requests: 1317
+  p50: 3969.00 ms
+  p90: 4563.00 ms
+  p99: 5319.00 ms
+  max: 6259.00 ms
+  mean: 3797.98 ms
+  stddev: 832.04 ms
+  Data throughput: 0.057 MB/s (mean)
+  Errors: 0
+  Timeouts: 0
+  Non-2xx: 0
+  p50: 3969.00 ms
+  p75: 4202.00 ms
+  p90: 4563.00 ms
+  p97_5: 5057.00 ms
+  p99: 5319.00 ms
+  p99_9: 6004.00 ms
+  exit=0
+=== STAGE c=1000 ===
+  Requests/second: 151.10 (mean)
+  Total requests: 3022
+  p50: 5668.00 ms
+  p90: 7649.00 ms
+  p99: 8685.00 ms
+  max: 9244.00 ms
+  mean: 5687.84 ms
+  stddev: 1596.49 ms
+  Data throughput: 0.079 MB/s (mean)
+  Errors: 1
+  Timeouts: 1
+  Non-2xx: 700
+  p50: 5668.00 ms
+  p75: 6649.00 ms
+  p90: 7649.00 ms
+  p97_5: 8387.00 ms
+  p99: 8685.00 ms
+  p99_9: 9148.00 ms
+  exit=1
+=== SUSTAINED STAGE c=500 d=60 ===
+  Requests/second: 113.55 (mean)
+  Total requests: 6813
+  p50: 4270.00 ms
+  p90: 4866.00 ms
+  p99: 5836.00 ms
+  max: 7205.00 ms
+  mean: 4254.63 ms
+  stddev: 625.21 ms
+  Data throughput: 0.059 MB/s (mean)
+  Errors: 0
+  Timeouts: 0
+  Non-2xx: 0
+  p50: 4270.00 ms
+  p75: 4519.00 ms
+  p90: 4866.00 ms
+  p97_5: 5470.00 ms
+  p99: 5836.00 ms
+  p99_9: 6479.00 ms
+  exit=0

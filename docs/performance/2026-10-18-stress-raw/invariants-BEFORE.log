@@ -1,0 +1,14 @@
+ Container usage-metering-redis Running 
+ Container usage-metering-db Recreate 
+ Container usage-metering-db Recreated 
+ Container usage-metering-db Starting 
+ Container usage-metering-db Started 
+ Container usage-metering-redis Waiting 
+ Container usage-metering-db Waiting 
+ Container usage-metering-redis Healthy 
+ Container usage-metering-db Healthy 
+ Container usage-metering-quota-service-app-run-02e3228d0bae Creating 
+ Container usage-metering-quota-service-app-run-02e3228d0bae Created 
+Verifying accounting invariants (usage_counters vs usage_requests)...
+Scope: all accounts; usage_requests: 8967 accepted, 35 rejected (rejected units excluded from counters by INV-1/INV-2)
+All accounting invariants hold.

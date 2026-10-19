@@ -1,0 +1,16 @@
+{
+  "idempotencyKey": "storm-1792348275298-76927u",
+  "storm": 200,
+  "units": "1",
+  "statusCounts": {
+    "200": 200
+  },
+  "decisionCounts": {
+    "accepted": 200
+  },
+  "distinctAccountRemainings": [
+    "999999981920"
+  ],
+  "rejectionReasons": [],
+  "remainingBefore": "999999981921"
+}
