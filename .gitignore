@@ -36,3 +36,12 @@ coverage/
 # Misc
 *.tgz
 .cache/
+
+# Performance evidence: the stress reports link to these raw logs.
+# Listed after the global *.log rule so the negation wins.
+!docs/performance/**/*.log
+
+# Never track campaign/test credentials: full API keys live in these files.
+keys.env
+fixtures-output.json
+baseline-test-suite.log
