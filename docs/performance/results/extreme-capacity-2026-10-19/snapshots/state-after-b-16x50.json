@@ -1,0 +1,223 @@
+{
+  "captured_at": "2026-10-18T22:56:58.913636+00:00",
+  "accounts": 21,
+  "users": 33,
+  "plans": 47,
+  "api_keys": 22,
+  "usage_requests_total": 221449,
+  "usage_requests_accepted": 221443,
+  "usage_requests_rejected": 6,
+  "accepted_units_sum": "221475",
+  "rejected_units_sum": "26",
+  "rejected_with_units_gt_zero": 6,
+  "account_counters": [
+    {
+      "account_id": "1",
+      "period_start": "2026-10-01",
+      "counter": "44",
+      "updated_at": "2026-10-18T22:51:38.00134+00:00"
+    },
+    {
+      "account_id": "10",
+      "period_start": "2026-10-01",
+      "counter": "6032",
+      "updated_at": "2026-10-18T22:56:57.004391+00:00"
+    },
+    {
+      "account_id": "11",
+      "period_start": "2026-10-01",
+      "counter": "1476",
+      "updated_at": "2026-10-18T22:56:58.76378+00:00"
+    },
+    {
+      "account_id": "12",
+      "period_start": "2026-10-01",
+      "counter": "1433",
+      "updated_at": "2026-10-18T22:56:58.823992+00:00"
+    },
+    {
+      "account_id": "13",
+      "period_start": "2026-10-01",
+      "counter": "1388",
+      "updated_at": "2026-10-18T22:56:56.833269+00:00"
+    },
+    {
+      "account_id": "14",
+      "period_start": "2026-10-01",
+      "counter": "1365",
+      "updated_at": "2026-10-18T22:56:57.752749+00:00"
+    },
+    {
+      "account_id": "15",
+      "period_start": "2026-10-01",
+      "counter": "1364",
+      "updated_at": "2026-10-18T22:56:58.507158+00:00"
+    },
+    {
+      "account_id": "16",
+      "period_start": "2026-10-01",
+      "counter": "1409",
+      "updated_at": "2026-10-18T22:56:58.724129+00:00"
+    },
+    {
+      "account_id": "17",
+      "period_start": "2026-10-01",
+      "counter": "1376",
+      "updated_at": "2026-10-18T22:56:58.752152+00:00"
+    },
+    {
+      "account_id": "18",
+      "period_start": "2026-10-01",
+      "counter": "1394",
+      "updated_at": "2026-10-18T22:56:57.996807+00:00"
+    },
+    {
+      "account_id": "2",
+      "period_start": "2026-10-01",
+      "counter": "161341",
+      "updated_at": "2026-10-18T22:32:26.851546+00:00"
+    },
+    {
+      "account_id": "3",
+      "period_start": "2026-10-01",
+      "counter": "6078",
+      "updated_at": "2026-10-18T22:56:58.842312+00:00"
+    },
+    {
+      "account_id": "4",
+      "period_start": "2026-10-01",
+      "counter": "6176",
+      "updated_at": "2026-10-18T22:56:58.630591+00:00"
+    },
+    {
+      "account_id": "5",
+      "period_start": "2026-10-01",
+      "counter": "6110",
+      "updated_at": "2026-10-18T22:56:58.839887+00:00"
+    },
+    {
+      "account_id": "6",
+      "period_start": "2026-10-01",
+      "counter": "6137",
+      "updated_at": "2026-10-18T22:56:57.327455+00:00"
+    },
+    {
+      "account_id": "7",
+      "period_start": "2026-10-01",
+      "counter": "6104",
+      "updated_at": "2026-10-18T22:56:58.823651+00:00"
+    },
+    {
+      "account_id": "8",
+      "period_start": "2026-10-01",
+      "counter": "6128",
+      "updated_at": "2026-10-18T22:56:57.593231+00:00"
+    },
+    {
+      "account_id": "9",
+      "period_start": "2026-10-01",
+      "counter": "6120",
+      "updated_at": "2026-10-18T22:56:58.713083+00:00"
+    }
+  ],
+  "user_counters": [
+    {
+      "account_id": "1",
+      "user_id": "1",
+      "period_start": "2026-10-01",
+      "counter": "6"
+    },
+    {
+      "account_id": "1",
+      "user_id": "2",
+      "period_start": "2026-10-01",
+      "counter": "5"
+    },
+    {
+      "account_id": "1",
+      "user_id": "3",
+      "period_start": "2026-10-01",
+      "counter": "10"
+    },
+    {
+      "account_id": "1",
+      "user_id": "31",
+      "period_start": "2026-10-01",
+      "counter": "6"
+    },
+    {
+      "account_id": "1",
+      "user_id": "32",
+      "period_start": "2026-10-01",
+      "counter": "5"
+    },
+    {
+      "account_id": "1",
+      "user_id": "33",
+      "period_start": "2026-10-01",
+      "counter": "10"
+    },
+    {
+      "account_id": "2",
+      "user_id": "10",
+      "period_start": "2026-10-01",
+      "counter": "1482"
+    },
+    {
+      "account_id": "2",
+      "user_id": "11",
+      "period_start": "2026-10-01",
+      "counter": "1470"
+    },
+    {
+      "account_id": "2",
+      "user_id": "4",
+      "period_start": "2026-10-01",
+      "counter": "1504"
+    },
+    {
+      "account_id": "2",
+      "user_id": "5",
+      "period_start": "2026-10-01",
+      "counter": "1484"
+    },
+    {
+      "account_id": "2",
+      "user_id": "6",
+      "period_start": "2026-10-01",
+      "counter": "1491"
+    },
+    {
+      "account_id": "2",
+      "user_id": "7",
+      "period_start": "2026-10-01",
+      "counter": "1485"
+    },
+    {
+      "account_id": "2",
+      "user_id": "8",
+      "period_start": "2026-10-01",
+      "counter": "1453"
+    },
+    {
+      "account_id": "2",
+      "user_id": "9",
+      "period_start": "2026-10-01",
+      "counter": "1454"
+    }
+  ],
+  "negative_remainings": 0,
+  "duplicate_idempotency_keys": 0,
+  "period_start_mismatches_requests": 0,
+  "rejected_rows_in_counters_check": 0,
+  "pg_stat_database": {
+    "xact_commit": "92478",
+    "xact_rollback": "0",
+    "deadlocks": "0",
+    "conflicts": "0",
+    "blks_read": "45152",
+    "blks_hit": "11395139",
+    "temp_files": "0",
+    "temp_bytes": "0"
+  }
+}

@@ -1,0 +1,246 @@
+{
+  "meta": {
+    "label": "b-8x25",
+    "kind": "multi-account",
+    "accounts": 8,
+    "usersPerAccount": null,
+    "connectionsPerAccount": 25,
+    "totalConnections": 200,
+    "durationSec": 60,
+    "units": "1",
+    "url": "http://localhost:3100",
+    "startedAt": "2026-10-18T22:52:07.429Z",
+    "finishedAt": "2026-10-18T22:53:08.169Z",
+    "keysPrefixes": [
+      "5fcdaddad7bdeb",
+      "80757b0cd08fd9",
+      "4c4927767a8823",
+      "14c0d0033a9b7c",
+      "7de8f7c39d4366",
+      "075229d2d06e38",
+      "13823a568bf2ba",
+      "33cbe070d6cde8"
+    ],
+    "users": []
+  },
+  "aggregate": {
+    "totalRequests": 10845,
+    "requestsPerSec": 180.75,
+    "perAccountRps": [
+      22.34,
+      22.6,
+      22.92,
+      22.47,
+      22.7,
+      22.97,
+      22.39,
+      22.39
+    ],
+    "perAccountRpsMin": 22.34,
+    "perAccountRpsMax": 22.97,
+    "p50": {
+      "min": 1052,
+      "median": 1060,
+      "max": 1066
+    },
+    "p99": {
+      "min": 1709,
+      "median": 2285,
+      "max": 3080
+    },
+    "latencyMaxAcrossAccounts": 3577,
+    "errors": 0,
+    "timeouts": 0,
+    "non2xx": 0,
+    "resets": 0,
+    "statusCodes": {
+      "200": 10845
+    }
+  },
+  "children": [
+    {
+      "index": 0,
+      "exitCode": 0,
+      "stdout": "b-8x25-acct0 c=25 d=60s rps=22.3 total=1340 p50=1060 p90=1254 p99=3080 max=3577 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:1340]",
+      "summary": {
+        "rps": 22.34,
+        "total": 1340,
+        "p50": 1060,
+        "p90": 1254,
+        "p99": 3080,
+        "max": 3577,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 0,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 1340
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-8x25--acct00.json"
+      }
+    },
+    {
+      "index": 1,
+      "exitCode": 0,
+      "stdout": "b-8x25-acct1 c=25 d=60s rps=22.6 total=1356 p50=1057 p90=1271 p99=2068 max=2430 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:1356]",
+      "summary": {
+        "rps": 22.6,
+        "total": 1356,
+        "p50": 1057,
+        "p90": 1271,
+        "p99": 2068,
+        "max": 2430,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 0,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 1356
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-8x25--acct01.json"
+      }
+    },
+    {
+      "index": 2,
+      "exitCode": 0,
+      "stdout": "b-8x25-acct2 c=25 d=60s rps=22.9 total=1375 p50=1066 p90=1241 p99=1771 max=1989 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:1375]",
+      "summary": {
+        "rps": 22.92,
+        "total": 1375,
+        "p50": 1066,
+        "p90": 1241,
+        "p99": 1771,
+        "max": 1989,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 0,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 1375
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-8x25--acct02.json"
+      }
+    },
+    {
+      "index": 3,
+      "exitCode": 0,
+      "stdout": "b-8x25-acct3 c=25 d=60s rps=22.5 total=1348 p50=1060 p90=1269 p99=2491 max=2994 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:1348]",
+      "summary": {
+        "rps": 22.47,
+        "total": 1348,
+        "p50": 1060,
+        "p90": 1269,
+        "p99": 2491,
+        "max": 2994,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 0,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 1348
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-8x25--acct03.json"
+      }
+    },
+    {
+      "index": 4,
+      "exitCode": 0,
+      "stdout": "b-8x25-acct4 c=25 d=60s rps=22.7 total=1362 p50=1059 p90=1264 p99=1771 max=2002 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:1362]",
+      "summary": {
+        "rps": 22.7,
+        "total": 1362,
+        "p50": 1059,
+        "p90": 1264,
+        "p99": 1771,
+        "max": 2002,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 0,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 1362
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-8x25--acct04.json"
+      }
+    },
+    {
+      "index": 5,
+      "exitCode": 0,
+      "stdout": "b-8x25-acct5 c=25 d=60s rps=23.0 total=1378 p50=1063 p90=1251 p99=1709 max=1813 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:1378]",
+      "summary": {
+        "rps": 22.97,
+        "total": 1378,
+        "p50": 1063,
+        "p90": 1251,
+        "p99": 1709,
+        "max": 1813,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 0,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 1378
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-8x25--acct05.json"
+      }
+    },
+    {
+      "index": 6,
+      "exitCode": 0,
+      "stdout": "b-8x25-acct6 c=25 d=60s rps=22.4 total=1343 p50=1058 p90=1279 p99=2285 max=2706 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:1343]",
+      "summary": {
+        "rps": 22.39,
+        "total": 1343,
+        "p50": 1058,
+        "p90": 1279,
+        "p99": 2285,
+        "max": 2706,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 0,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 1343
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-8x25--acct06.json"
+      }
+    },
+    {
+      "index": 7,
+      "exitCode": 0,
+      "stdout": "b-8x25-acct7 c=25 d=60s rps=22.4 total=1343 p50=1052 p90=1241 p99=3003 max=3453 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:1343]",
+      "summary": {
+        "rps": 22.39,
+        "total": 1343,
+        "p50": 1052,
+        "p90": 1241,
+        "p99": 3003,
+        "max": 3453,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 0,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 1343
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-8x25--acct07.json"
+      }
+    }
+  ]
+}

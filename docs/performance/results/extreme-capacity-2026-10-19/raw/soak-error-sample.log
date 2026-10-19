@@ -1,0 +1,23 @@
+[23:09:40 UTC] [31mERROR[39m: [36mUnhandled error[39m
+    service: "usage-metering-quota-service"
+    env: "development"
+    requestId: "a81138bf-e64b-49dc-971e-5461f771b276"
+    err: {
+      "type": "Error",
+      "message": "timeout exceeded when trying to connect",
+      "stack":
+          Error: timeout exceeded when trying to connect
+              at /app/node_modules/pg-pool/index.js:45:11
+              at runNextTicks (node:internal/process/task_queues:64:5)
+              at listOnTimeout (node:internal/timers:547:9)
+              at process.processTimers (node:internal/timers:521:7)
+              at async NodePgSession.transaction (file:///app/node_modules/drizzle-orm/node-postgres/session.js:102:69)
+              at async withTransaction (file:///app/dist/db/client.js:33:20)
+              at async processUsageRequest (file:///app/dist/application/usage/usageService.js:35:12)
+              at async file:///app/dist/presentation/routes/usageRoutes.js:14:20
+    }
+[23:09:40 UTC] [32mINFO[39m: [36mHTTP request[39m
+    service: "usage-metering-quota-service"
+    env: "development"
+    requestId: "a81138bf-e64b-49dc-971e-5461f771b276"
+    method: "POST"

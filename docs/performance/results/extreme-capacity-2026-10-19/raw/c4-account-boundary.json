@@ -1,0 +1,21 @@
+{
+  "count": 200,
+  "units": "1",
+  "userId": null,
+  "wallMs": 2610,
+  "statusCounts": {
+    "200": 200
+  },
+  "decisionCounts": {
+    "accepted": 50,
+    "rejected": 150
+  },
+  "rejectionReasons": {
+    "none": 50,
+    "account_quota_exceeded": 150
+  },
+  "acceptedUnits": 50,
+  "minAccountRemaining": 0,
+  "maxAccountRemaining": 49,
+  "minUserRemaining": null
+}

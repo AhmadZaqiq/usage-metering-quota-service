@@ -1,0 +1,264 @@
+{
+  "meta": {
+    "label": "a-multi8x25",
+    "kind": "multi-account",
+    "accounts": 8,
+    "usersPerAccount": [
+      "hot-u1",
+      "hot-u2",
+      "hot-u3",
+      "hot-u4",
+      "hot-u5",
+      "hot-u6",
+      "hot-u7",
+      "hot-u8"
+    ],
+    "connectionsPerAccount": 25,
+    "totalConnections": 200,
+    "durationSec": 60,
+    "units": "1",
+    "url": "http://localhost:3100",
+    "startedAt": "2026-10-18T22:30:22.103Z",
+    "finishedAt": "2026-10-18T22:31:22.523Z",
+    "keysPrefixes": [
+      "b41c520acec268",
+      "b41c520acec268",
+      "b41c520acec268",
+      "b41c520acec268",
+      "b41c520acec268",
+      "b41c520acec268",
+      "b41c520acec268",
+      "b41c520acec268"
+    ],
+    "users": [
+      "hot-u1",
+      "hot-u2",
+      "hot-u3",
+      "hot-u4",
+      "hot-u5",
+      "hot-u6",
+      "hot-u7",
+      "hot-u8"
+    ]
+  },
+  "aggregate": {
+    "totalRequests": 5465,
+    "requestsPerSec": 91.08,
+    "perAccountRps": [
+      11.52,
+      11.54,
+      11.32,
+      11.32,
+      11.17,
+      11.34,
+      11.3,
+      11.6
+    ],
+    "perAccountRpsMin": 11.17,
+    "perAccountRpsMax": 11.6,
+    "p50": {
+      "min": 1904,
+      "median": 1915,
+      "max": 1921
+    },
+    "p99": {
+      "min": 4091,
+      "median": 5008,
+      "max": 5636
+    },
+    "latencyMaxAcrossAccounts": 6340,
+    "errors": 0,
+    "timeouts": 0,
+    "non2xx": 0,
+    "resets": 0,
+    "statusCodes": {
+      "200": 5465
+    }
+  },
+  "children": [
+    {
+      "index": 0,
+      "exitCode": 0,
+      "stdout": "a-multi8x25-acct0 c=25 d=60s rps=11.5 total=691 p50=1921 p90=2658 p99=4091 max=5275 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:691]",
+      "summary": {
+        "rps": 11.52,
+        "total": 691,
+        "p50": 1921,
+        "p90": 2658,
+        "p99": 4091,
+        "max": 5275,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 0,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 691
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/a-multi8x25--acct00.json"
+      }
+    },
+    {
+      "index": 1,
+      "exitCode": 0,
+      "stdout": "a-multi8x25-acct1 c=25 d=60s rps=11.5 total=692 p50=1908 p90=2589 p99=4243 max=5778 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:692]",
+      "summary": {
+        "rps": 11.54,
+        "total": 692,
+        "p50": 1908,
+        "p90": 2589,
+        "p99": 4243,
+        "max": 5778,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 0,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 692
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/a-multi8x25--acct01.json"
+      }
+    },
+    {
+      "index": 2,
+      "exitCode": 0,
+      "stdout": "a-multi8x25-acct2 c=25 d=60s rps=11.3 total=679 p50=1913 p90=2611 p99=5008 max=5747 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:679]",
+      "summary": {
+        "rps": 11.32,
+        "total": 679,
+        "p50": 1913,
+        "p90": 2611,
+        "p99": 5008,
+        "max": 5747,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 0,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 679
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/a-multi8x25--acct02.json"
+      }
+    },
+    {
+      "index": 3,
+      "exitCode": 0,
+      "stdout": "a-multi8x25-acct3 c=25 d=60s rps=11.3 total=679 p50=1915 p90=2604 p99=5066 max=5724 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:679]",
+      "summary": {
+        "rps": 11.32,
+        "total": 679,
+        "p50": 1915,
+        "p90": 2604,
+        "p99": 5066,
+        "max": 5724,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 0,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 679
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/a-multi8x25--acct03.json"
+      }
+    },
+    {
+      "index": 4,
+      "exitCode": 0,
+      "stdout": "a-multi8x25-acct4 c=25 d=60s rps=11.2 total=670 p50=1919 p90=2684 p99=5500 max=6291 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:670]",
+      "summary": {
+        "rps": 11.17,
+        "total": 670,
+        "p50": 1919,
+        "p90": 2684,
+        "p99": 5500,
+        "max": 6291,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 0,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 670
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/a-multi8x25--acct04.json"
+      }
+    },
+    {
+      "index": 5,
+      "exitCode": 0,
+      "stdout": "a-multi8x25-acct5 c=25 d=60s rps=11.3 total=680 p50=1912 p90=2700 p99=4446 max=4973 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:680]",
+      "summary": {
+        "rps": 11.34,
+        "total": 680,
+        "p50": 1912,
+        "p90": 2700,
+        "p99": 4446,
+        "max": 4973,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 0,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 680
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/a-multi8x25--acct05.json"
+      }
+    },
+    {
+      "index": 6,
+      "exitCode": 0,
+      "stdout": "a-multi8x25-acct6 c=25 d=60s rps=11.3 total=678 p50=1904 p90=2625 p99=5636 max=6340 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:678]",
+      "summary": {
+        "rps": 11.3,
+        "total": 678,
+        "p50": 1904,
+        "p90": 2625,
+        "p99": 5636,
+        "max": 6340,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 0,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 678
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/a-multi8x25--acct06.json"
+      }
+    },
+    {
+      "index": 7,
+      "exitCode": 0,
+      "stdout": "a-multi8x25-acct7 c=25 d=60s rps=11.6 total=696 p50=1915 p90=2614 p99=4214 max=5308 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:696]",
+      "summary": {
+        "rps": 11.6,
+        "total": 696,
+        "p50": 1915,
+        "p90": 2614,
+        "p99": 4214,
+        "max": 5308,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 0,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 696
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/a-multi8x25--acct07.json"
+      }
+    }
+  ]
+}

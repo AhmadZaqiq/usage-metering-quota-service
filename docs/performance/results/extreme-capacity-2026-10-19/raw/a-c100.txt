@@ -1,0 +1,1 @@
+a-c100 c=100 d=60s rps=125.1 total=7508 p50=672 p90=1152 p99=1827 max=3350 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:7508]

@@ -1,0 +1,1 @@
+b-8x50 accounts=8 x c=50 (total 400) aggregateRps=186.9 perAccount[min..max]=22.8..24.0 p50[med]=2091 p99[med]=2637 errors=0 timeouts=0 non2xx=0 resets=0

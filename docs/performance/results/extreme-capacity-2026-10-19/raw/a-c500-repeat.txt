@@ -1,0 +1,1 @@
+a-c500-repeat c=500 d=60s rps=124.9 total=7496 p50=3880 p90=4292 p99=4977 max=6319 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:7496]
