@@ -34,12 +34,12 @@ If you discover a security vulnerability in this project, please report it respo
 - Parameterized queries via Drizzle ORM (no SQL injection)
 
 ### Rate Limiting
-- **Distributed rate limiting via Redis** (optional, falls back to a bounded in-process store)
+- **Per-process rate limiting** via a bounded in-process store (no external service; counters reset on restart and are not shared across replicas)
 - Unauthenticated: per IP (`ip:<address>`)
 - Authenticated: per verified API-key id (`key:<id>`, never the raw secret or prefix)
-- Atomic increment/expiration via a Redis `MULTI`/`EXEC` (`INCR` + `EXPIRE ... NX`)
-- Graceful degradation to in-memory if Redis unavailable; fail-closed (429) if every store fails
-- Standard headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
+- Synchronous counter updates within the process, so concurrent requests cannot lose counts; store bounded to 10,000 keys with expired-entry reclamation and oldest-first eviction
+- Fail-closed (429): if the store itself fails, the request is rejected — never silently allowed
+- Standard headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, plus `Retry-After` on limit rejections
 
 ### Secrets Management
 - No secrets in source code or Git history
@@ -61,7 +61,7 @@ If you discover a security vulnerability in this project, please report it respo
 
 ## Known Limitations
 
-1. **Rate Limiting**: Redis-backed distributed limiting is optional; falls back to in-memory if Redis unavailable (documented in logs).
+1. **Rate Limiting**: In-process per application instance — counters reset on restart and are not shared across replicas (each replica enforces the configured limit independently); fail-closed (429) if the store fails.
 2. **No TLS in Application**: Terminates at reverse proxy (nginx/Traefik/Caddy) in production.
 3. **Single Database Instance**: No read replicas or failover configured.
 4. **API Key Rotation**: Not automated; manual revocation + creation required.
@@ -73,7 +73,7 @@ If you discover a security vulnerability in this project, please report it respo
 - [ ] Set `TRUST_PROXY=true` when behind trusted reverse proxy
 - [ ] CORS is not configured (no browser clients): if browser-based clients are added later, restrict CORS origins to known domains in `app.ts`
 - [ ] Set `LOG_LEVEL=warn` or `error` in production
-- [ ] Use secrets manager for `DATABASE_URL`, `REDIS_URL`, and other secrets
+- [ ] Use secrets manager for `DATABASE_URL` and other secrets
 - [ ] Configure database connection pooling for production load
 - [ ] Enable database audit logging if required
 - [ ] Review and adjust rate limit thresholds

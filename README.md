@@ -19,7 +19,7 @@ A professional, backend-only Usage Metering & Quota Service built with TypeScrip
 - **Structured Logging**: Pino-based request/decision logging with correlation IDs
 - **Health Endpoints**: Liveness (`/health/live`) and readiness (`/health/ready`) probes
 - **API Documentation**: OpenAPI 3.1 specification at `/docs/openapi.json` and interactive Swagger UI at `/docs`
-- **Rate Limiting**: Two layers — per-IP before authentication, per-API-key after; Redis-backed with in-process fallback (falling back to a bounded in-memory store per instance; if both stores fail, requests are rejected 429 — fail-closed)
+- **Rate Limiting**: Two layers — per-IP before authentication, per-API-key after; enforced by a bounded in-process store per application instance (if the store fails, requests are rejected 429 — fail-closed)
 - **Docker Support**: Docker Compose for local development with PostgreSQL 16; the container starts as root only to repair the secrets volume's ownership, then drops to the unprivileged `node` user before serving traffic
 - **Example Client**: Demo CLI that walks the full lifecycle end to end (accepted usage, all three rejection types, divergent per-user plans, immediate plan changes, idempotent replay, and proof that rejected requests are preserved in history)
 - **Accounting Invariant Verifier**: `verify-invariants` script cross-checks counters against the decision log and exits non-zero on any mismatch
@@ -57,7 +57,7 @@ graph TD
 | Domain | `domain/` | Pure quota evaluation, idempotency hashing, date utilities |
 | Infrastructure | `infrastructure/repositories/` | All database queries (Drizzle + raw SQL) |
 | Infrastructure | `infrastructure/auth/` | API key verification (repository + crypto) |
-| Infrastructure | `infrastructure/rateLimiter.ts` | Rate limiting (in-memory + Redis) |
+| Infrastructure | `infrastructure/rateLimiter.ts` | Rate limiting (bounded in-process store) |
 | Cross-cutting | `config/` | Environment validation |
 | Cross-cutting | `errors/` | Error types and HTTP error mapping |
 | Cross-cutting | `logging/` | Structured logging with correlation IDs |
@@ -332,10 +332,8 @@ RATE_LIMIT_WINDOW_MS=60000
 RATE_LIMIT_MAX=100
 LOG_LEVEL=info
 TRUST_PROXY=false
-# REDIS_URL is optional: without it, rate limiting uses a bounded in-process store.
-# The value below is the Docker Compose-internal hostname; for host-local
-# development without Docker use redis://localhost:6379 (or omit it entirely).
-# REDIS_URL=redis://redis:6379
+# Rate limiting is in-process per application instance: counters reset on
+# process restart and are not shared across replicas (no external store).
 ```
 
 ### Docker Compose (Recommended)
@@ -553,8 +551,6 @@ KEY=$(docker compose exec -T app-test cat /run/secrets/api-key)
 LOADTEST_API_KEY="$KEY" docker compose --profile loadtest run --rm loadtest -d 5 -c 10
 ```
 
-> **Shared rate-limit bucket**: `app-test` reuses the `redis` service, and rate-limit keys are `ratelimit:ip:{ip}` with no per-instance namespace. A load test from the host therefore consumes the same per-IP window that the main `app` stack (default `RATE_LIMIT_MAX=100`) enforces — the next request to `app` from the same IP may return `429` for up to one window (`RATE_LIMIT_WINDOW_MS`). Wait out the window or run `docker compose restart app` if you see an unexpected `429` on the main stack right after a load test; per-key limits are unaffected because the two stacks use different API keys.
-
 ### Load Testing
 
 ```bash
@@ -630,7 +626,7 @@ src/
 │   │   └── userRepository.ts
 │   ├── auth/
 │   │   └── apiKeyAuthService.ts # API key verification (repository + hash)
-│   └── rateLimiter.ts          # In-memory + Redis rate limiting
+│   └── rateLimiter.ts          # In-process rate limiting (bounded store)
 ├── presentation/               # HTTP layer (Express)
 │   ├── middleware/
 │   │   ├── authMiddleware.ts   # Bearer token authentication
@@ -692,7 +688,7 @@ src/
 - **Secret Handling**: API key secrets never logged; only prefix + SHA-256 hash stored; comparisons are timing-safe. In Docker, the bootstrap key file lives on the `bootstrap-secrets` volume owned by `node` with mode `0600` (directory `0700`), repaired on every start by the entrypoint before it drops privileges
 - **Log Redaction**: Pino redacts `authorization` / `x-api-key` / `cookie` fields anywhere in log objects
 - **Parameterized Queries**: Drizzle ORM prevents SQL injection
-- **Rate Limiting**: Per-IP before authentication, per-API-key after (defaults: `RATE_LIMIT_MAX` = 100 requests per `RATE_LIMIT_WINDOW_MS` = 60s, applied independently to each layer); Redis-backed when `REDIS_URL` is set with in-process fallback; if both stores fail, requests are rejected `429` (fail-closed)
+- **Rate Limiting**: Per-IP before authentication, per-API-key after (defaults: `RATE_LIMIT_MAX` = 100 requests per `RATE_LIMIT_WINDOW_MS` = 60s, applied independently to each layer); bounded in-process store per application instance; if the store fails, requests are rejected `429` (fail-closed)
 - **Request Size Limit**: 64KB body limit; server `requestTimeout` 15s, `headersTimeout` 10s
 - **Database Bounds**: Pool `statement_timeout` 15s so runaway statements cannot pin connections
 - **CORS**: Not configured; API key authentication provides primary access control. Configure CORS in `app.ts` if browser-based clients are needed.
@@ -709,7 +705,7 @@ Honest status of items that are deliberately not done:
 
 1. **Idempotency Key Retention**: Keys are unique per account indefinitely; no TTL/archival — the `usage_requests` table grows without bound. A retention job is out of scope for this milestone.
 2. **`int8` Type Parser (audit DB-08)**: PostgreSQL `BIGINT` values are coerced to native `bigint` at repository mapping boundaries (and via Drizzle `mode: "bigint"`) instead of installing a global `pg` type parser. A global parser would also affect health checks, migrations, and any future raw client usage; the localized approach is explicit and test-covered.
-3. **Single-Instance Rate Limiting**: Without `REDIS_URL`, per-IP/per-key counters are per-process; multi-instance deployments require Redis. Redis failure degrades to a bounded in-process store per instance (still enforced, not shared).
+3. **Per-Process Rate Limiting**: Rate-limit counters are held in a bounded in-process store: they reset when the application process restarts and are **not shared between application replicas**. Each replica enforces the configured limit independently. There is no distributed rate limiting; deployments that need cross-replica request budgets must add an external shared store themselves (deliberately out of scope — the service has no optional Redis/other-store integration).
 4. **No Distributed Tracing / Metrics**: Structured logs with request IDs only; no OpenTelemetry or Prometheus.
 5. **Performance Baseline**: Dated measurements of the Compose stack exist ([`docs/performance/2026-10-18-compose.md`](docs/performance/2026-10-18-compose.md) for a 30-second baseline; [`docs/performance/2026-10-18-stress.md`](docs/performance/2026-10-18-stress.md) for the progressive stress campaign 10→1000 connections; [`docs/performance/results/extreme-capacity-2026-10-19/REPORT.md`](docs/performance/results/extreme-capacity-2026-10-19/REPORT.md) for the extreme-capacity campaign up to 800 connections) but are not re-run for every change; numbers describe a single development machine and are dated, environment-specific observations — not universal performance guarantees.
 6. **No Independent Security Audit**: The "Security" section describes implemented controls with tests; it is not a substitute for a professional assessment (see portfolio notice above).
@@ -719,13 +715,13 @@ Honest status of items that are deliberately not done:
 
 ## Performance Baseline
 
-Load testing was performed with Autocannon against the Docker Compose stack (app + PostgreSQL 16 + Redis in containers) on a single development machine. Results are a local baseline for the recorded environment, not a universal production capacity guarantee.
+Load testing was performed with Autocannon against the Docker Compose stack (app + PostgreSQL 16 in containers) on a single development machine. Results are a local baseline for the recorded environment, not a universal production capacity guarantee.
 
 ### Test Environment (2026-10-18)
 
 - Host: Linux x86_64, 12 CPU cores, 7.9 GB RAM
 - App: `node:22-alpine` in Docker Compose
-- PostgreSQL 16.15 and Redis 7 in Docker Compose
+- PostgreSQL 16.15 in Docker Compose (the historical stack also ran Redis 7 for rate limiting; Redis has since been removed from the project)
 - Rate limit raised to `RATE_LIMIT_MAX=10000000` for the measurement window only (default is 100 req/60s per layer)
 - Account-scoped authenticated `POST /usage`, `units=1`, unique idempotency key per request, pipelining 1
 

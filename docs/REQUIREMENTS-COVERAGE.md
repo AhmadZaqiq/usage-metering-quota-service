@@ -69,7 +69,7 @@ automated test that would fail if the behavior regressed.
 | Input validated at the boundary; oversized/malformed payloads mapped (400/413) | Zod schemas, express json limits | `httpValidation.test.ts` | Covered |
 | Structured logging with correlation, never logging secrets | `src/logging/logger.ts` (Pino), auth middleware redaction | `logger.test.ts` | Covered |
 | Health/readiness endpoints and operational failure handling | `src/presentation/routes/healthRoutes.ts` | `healthFailure.test.ts` | Covered |
-| Rate limiting with documented headers/status | `src/infrastructure/rateLimiter.ts` | `rateLimiter.test.ts`, `httpRateLimit.test.ts` | Covered |
+| Rate limiting enabled with documented headers/status; concurrent in-process requests cannot bypass the limit | `src/infrastructure/rateLimiter.ts` (bounded in-process store, fail-closed) | `rateLimiter.test.ts` (layers, concurrency, bounds, restart, fail-closed), `httpRateLimit.test.ts` (HTTP exhaustion + concurrent burst) | Covered |
 | OpenAPI 3.1 + Swagger UI kept in sync with mounted routes | `src/docs/openapi.ts` | `docs.test.ts` (drift fails the suite) | Covered |
 | `GET /usage` pagination + account-scoped `userId` filter (404 unknown) | `usageRoutes.ts`, `usageHistoryService.ts`, `usageRequestRepository.ts` | `httpScenarios.test.ts` (filter, 404, F-ISO-1), `httpValidation.test.ts` (pagination bounds) | Covered |
 | Environment validated at startup (Zod), no implicit defaults for critical settings | `src/config/index.ts` | `config.test.ts` | Covered |
@@ -105,6 +105,9 @@ automated test that would fail if the behavior regressed.
 
 Documented rather than silently implied; see the referenced sections:
 
+- Rate-limit counters are **in-process**: they reset on application restart
+  and are not shared across replicas; each replica enforces the configured
+  limit independently (no distributed rate limiting).
 - Mixed clock domains (process `Date.now()` in non-admission paths vs the
   database admission clock) — documented in `docs/ARCHITECTURE.md`; only the
   admission path is invariant-relevant (INV-5).
