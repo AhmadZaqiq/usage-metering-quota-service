@@ -25,10 +25,10 @@ import { db } from "../db/client.js";
 // assignment have real data instead of an empty system-plan set. Owner is
 // null, so planService treats them as read-only for every tenant.
 const SYSTEM_PLANS = [
-  { name: "Starter", type: "account", monthlyAllowance: 50_000n, maxUnitsPerRequest: 1_000n },
-  { name: "Pro", type: "account", monthlyAllowance: 500_000n, maxUnitsPerRequest: 5_000n },
-  { name: "Basic", type: "user", monthlyAllowance: 10_000n, maxUnitsPerRequest: 100n },
-  { name: "Premium", type: "user", monthlyAllowance: 100_000n, maxUnitsPerRequest: 1_000n },
+  { name: "Starter", type: "account", monthlyAllowance: 10_000n, maxUnitsPerRequest: 100n },
+  { name: "Pro", type: "account", monthlyAllowance: 1_000_000n, maxUnitsPerRequest: 1_000n },
+  { name: "Basic", type: "user", monthlyAllowance: 500n, maxUnitsPerRequest: 20n },
+  { name: "Premium", type: "user", monthlyAllowance: 5_000n, maxUnitsPerRequest: 200n },
 ] as const;
 
 async function ensureSystemPlans(): Promise<void> {

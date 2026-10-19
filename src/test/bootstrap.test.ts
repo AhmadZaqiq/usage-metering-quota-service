@@ -22,7 +22,14 @@ async function findAccount(name: string) {
 async function findSystemPlan(name: string, type: string) {
   const db = getTestDb();
   const [plan] = await db
-    .select({ id: plans.id, name: plans.name, type: plans.type, ownerAccountId: plans.ownerAccountId })
+    .select({
+      id: plans.id,
+      name: plans.name,
+      type: plans.type,
+      ownerAccountId: plans.ownerAccountId,
+      monthlyAllowance: plans.monthlyAllowance,
+      maxUnitsPerRequest: plans.maxUnitsPerRequest,
+    })
     .from(plans)
     .where(and(isNull(plans.ownerAccountId), eq(plans.name, name), eq(plans.type, type), isNull(plans.deletedAt)))
     .limit(1)
@@ -103,18 +110,26 @@ describe("Bootstrap Integration Tests", () => {
     const starter = await findSystemPlan("Starter", "account");
     expect(starter).not.toBeNull();
     expect(starter!.ownerAccountId).toBeNull();
+    expect(starter!.monthlyAllowance).toBe(10_000n);
+    expect(starter!.maxUnitsPerRequest).toBe(100n);
 
     const pro = await findSystemPlan("Pro", "account");
     expect(pro).not.toBeNull();
     expect(pro!.ownerAccountId).toBeNull();
+    expect(pro!.monthlyAllowance).toBe(1_000_000n);
+    expect(pro!.maxUnitsPerRequest).toBe(1_000n);
 
     const basic = await findSystemPlan("Basic", "user");
     expect(basic).not.toBeNull();
     expect(basic!.ownerAccountId).toBeNull();
+    expect(basic!.monthlyAllowance).toBe(500n);
+    expect(basic!.maxUnitsPerRequest).toBe(20n);
 
     const premium = await findSystemPlan("Premium", "user");
     expect(premium).not.toBeNull();
     expect(premium!.ownerAccountId).toBeNull();
+    expect(premium!.monthlyAllowance).toBe(5_000n);
+    expect(premium!.maxUnitsPerRequest).toBe(200n);
 
     const countAfterFirst = await countSystemPlans();
     expect(countAfterFirst).toBe(4);
@@ -187,7 +202,7 @@ describe("Bootstrap Integration Tests", () => {
     }, apiKeyId!);
 
     expect(result1.decision).toBe("accepted");
-    expect(result1.accountRemaining.toString()).toBe("49995"); // 50000 (Starter) - 5
+    expect(result1.accountRemaining.toString()).toBe("9995"); // 10000 (Starter) - 5
 
     const counterAfterFirst = await getAccountCounter(account!.id);
     expect(counterAfterFirst).toBe(5n);
