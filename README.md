@@ -20,7 +20,7 @@ A professional, backend-only Usage Metering & Quota Service built with TypeScrip
 - **Rate Limiting**: Per-IP before authentication and per-API-key after, over a bounded in-process store; if the store fails, requests are rejected `429` (fail-closed)
 - **Structured Logging, Health, Docs**: Pino request/decision logs with correlation; `/health/live` + `/health/ready`; OpenAPI 3.1 at `/docs/openapi.json` and Swagger UI at `/docs`
 - **Docker Support**: Multi-stage image; the container starts as root only to repair the secrets volume's ownership, then drops to the unprivileged `node` user before serving traffic
-- **Example CLI + Invariant Verifier**: A demo client walks the full lifecycle end to end; `verify-invariants` cross-checks counters against the decision log and exits non-zero on any mismatch
+- **Example CLI + Invariant Verifier**: A demo client walks the full lifecycle end to end, an interactive company simulator drives 12 guided scenarios over the same API, and `verify-invariants` cross-checks counters against the decision log and exits non-zero on any mismatch
 
 Full endpoint contracts: [`docs/API.md`](docs/API.md). Architecture, schema, invariants, and concurrency scenarios: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -178,7 +178,7 @@ Cross-cutting modules (config, logging, errors, validation) are imported by any 
 
 ## CLI Usage
 
-`src/cli/` is an HTTP-only example tenant client with four commands:
+`src/cli/` is an HTTP-only example tenant client with five commands:
 
 ```bash
 # demo (default): end-to-end walkthrough — health gate, 3 fresh demo users on
@@ -200,6 +200,16 @@ npm run client -- consume -n 5 -i req-001 --userId user123 -k <API_KEY>
 # usage: GET /usage filtered to one user; history: GET /usage paginated
 npm run client -- usage --userId user123 -k <API_KEY>
 npm run client -- history --page 1 --limit 10 -k <API_KEY>
+
+# simulate: interactive company simulator — idempotent setup of a fictional
+# tenant (users, plans, assignments), a menu (dashboard, users & balances,
+# consume, plans, assignments, paginated history), and 12 guided scenarios
+# (quota accept/reject with limitScope, shared account pool, per-request cap,
+# plan changes, idempotent replay and 409 conflict, validation/auth errors).
+# All state is re-read from the service; on exit it offers to restore the
+# account plan the session replaced. Reads menu choices from stdin, so it can
+# be scripted with piped input (EOF exits cleanly).
+npm run client -- simulate -k <API_KEY>
 
 npm run client -- --help
 ```
@@ -237,7 +247,7 @@ The full API key is never printed; only the public prefix is shown. Exit codes: 
 | `npm run bootstrap` | Seed system plans, create initial account + API key, assign Starter |
 | `npm run bootstrap:loadtest` | Create load test account + API key |
 | `npm run loadtest` | Run Autocannon load test |
-| `npm run client` | Run example CLI client (demo walkthrough by default) |
+| `npm run client` | Run example CLI client (demo walkthrough by default; `simulate` for the interactive company simulator) |
 | `npm run verify:invariants` | Cross-check usage counters against the decision log |
 
 ### Testing
@@ -324,8 +334,10 @@ src/
 ├── docs/openapi.ts                 # Hand-maintained OpenAPI 3.1 spec
 ├── scripts/                        # bootstrap, bootstrap-loadtest, loadtest, verify-invariants
 ├── cli/                            # Example CLI: index, options, apiClient, output,
-│                                   # commands/ (consume, usage, history), demo/ (setup, scenario)
-└── test/                           # 21 Vitest suites (unit + integration + concurrency)
+│                                   # commands/ (consume, usage, history, simulate),
+│                                   # demo/ (setup, scenario), simulate/ (menu, setup,
+│                                   # actions, scenarios: 12 guided scenarios)
+└── test/                           # 22 Vitest suites (unit + integration + concurrency)
 docs/
 ├── API.md                          # Endpoint contracts, request/response/error shapes
 ├── ARCHITECTURE.md                 # Layers, schema, invariants, concurrency scenarios, decisions
