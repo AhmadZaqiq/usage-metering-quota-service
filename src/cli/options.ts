@@ -21,6 +21,10 @@ Commands:
   history                    GET /usage, paginated.
       --page <n>             Page number (default 1)
       --limit <n>            Page size (default 50)
+  simulate                   Interactive company simulator: menu-driven walkthrough of
+                              dashboards, users, plans, assignments, usage, and 12
+                              guided quota scenarios. Reads piped input when stdin
+                              is not a terminal.
 
 Options:
   -u, --url <url>          Base URL of the service (default: ${DEFAULT_BASE_URL}, env BASE_URL)
@@ -31,7 +35,7 @@ Options:
 Exit codes: 0 success, 1 failure
 `;
 
-export type Command = 'demo' | 'consume' | 'usage' | 'history';
+export type Command = 'demo' | 'consume' | 'usage' | 'history' | 'simulate';
 
 export interface Options {
   command: Command;
@@ -90,7 +94,7 @@ export function parseOptions(): Options {
   if (command === undefined) {
     command = 'demo';
   }
-  if (!['demo', 'consume', 'usage', 'history'].includes(command)) {
+  if (!['demo', 'consume', 'usage', 'history', 'simulate'].includes(command)) {
     console.error(`Unknown command: ${command}`);
     console.error('Run with --help for usage.');
     process.exit(1);

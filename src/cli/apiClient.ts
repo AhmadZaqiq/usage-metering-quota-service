@@ -1,6 +1,8 @@
 export interface ApiResponse {
   status: number;
   data: Record<string, unknown>;
+  /** Lower-cased response headers (needed for Retry-After on 429). */
+  headers: Record<string, string>;
 }
 
 export class DemoError extends Error {}
@@ -45,7 +47,11 @@ export class ApiClient {
         data = { raw: text.slice(0, 200) };
       }
     }
-    return { status: response.status, data };
+    return {
+      status: response.status,
+      data,
+      headers: Object.fromEntries(response.headers.entries()),
+    };
   }
 }
 
@@ -54,7 +60,7 @@ export function maskKey(key: string): string {
   return `${key.split('.')[0]}.***`;
 }
 
-export function errCode(res: ApiResponse): string {
-  const error = res.data.error as { code?: string } | undefined;
+export function errCode(res: { data: unknown }): string {
+  const error = (res.data as { error?: { code?: string } } | undefined)?.error;
   return error?.code ?? '<none>';
 }

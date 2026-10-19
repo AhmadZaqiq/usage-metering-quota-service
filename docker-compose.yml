@@ -64,11 +64,17 @@ services:
       # directly); scoped to the bootstrapped account by name.
       DATABASE_URL: postgresql://app:app_secret@postgres:5432/usage_metering
       BOOTSTRAP_ACCOUNT_NAME: "Acme Corp"
+      # Base URL for every CLI command in this container (-u still overrides).
+      # Interpolation forwards a host-level BASE_URL when set, e.g.
+      #   BASE_URL=http://app:3000 docker compose run -i --rm client ...
+      BASE_URL: ${BASE_URL:-http://app:3000}
     depends_on:
       app:
         condition: service_healthy
     # Demo CLI: reads the API key from the shared secrets volume itself.
-    command: ["node", "dist/cli/index.js", "-u", "http://app:3000"]
+    # The URL comes from BASE_URL above, so custom commands (e.g.
+    # node dist/cli/index.js simulate) work without repeating -u.
+    command: ["node", "dist/cli/index.js"]
     volumes:
       - bootstrap-secrets:/run/secrets
 

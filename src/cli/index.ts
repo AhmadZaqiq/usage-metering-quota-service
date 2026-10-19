@@ -12,6 +12,9 @@
  *  - consume: send one POST /usage request (legacy -n/-i flags map through).
  *  - usage --userId: GET /usage filtered to a single user.
  *  - history: GET /usage, paginated.
+ *  - simulate: interactive company simulator — a menu-driven tenant client
+ *    that runs one fictional company (dashboards, users, plans, assignments,
+ *    consumption, history, and 12 guided quota scenarios) entirely over HTTP.
  *
  * Exit codes: 0 = success, 1 = failure. The full API key is never printed;
  * only the public prefix is shown.
@@ -21,6 +24,7 @@ import { runConsume } from './commands/consume.js';
 import { runUsage } from './commands/usage.js';
 import { runHistory } from './commands/history.js';
 import { runDemo } from './demo/scenario.js';
+import { runSimulate } from './commands/simulate.js';
 
 /**
  * Verify accounting invariants in-process after a successful demo. Skipped
@@ -60,6 +64,8 @@ async function main(): Promise<number> {
       return await runUsage(opts, key);
     case 'history':
       return await runHistory(opts, key);
+    case 'simulate':
+      return await runSimulate(opts, key);
     case 'demo':
     default: {
       const demoCode = await runDemo(opts, key);
