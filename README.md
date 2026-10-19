@@ -398,7 +398,7 @@ Honest status of items that are deliberately not done:
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT.
 
 ## Author
 
