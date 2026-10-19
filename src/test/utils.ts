@@ -4,7 +4,7 @@ import { eq, and, isNull } from "drizzle-orm";
 import { createApiKey } from "../application/auth/apiKeyService.js";
 import { createPlan } from "../application/plans/planService.js";
 import { createAssignment } from "../application/plans/assignmentService.js";
-import { processUsageRequest } from "../application/usage/usageService.js";
+import { processUsageRequest, type UsageRequestOptions } from "../application/usage/usageService.js";
 import { formatDateForDb, getUtcMonthStart } from "../domain/date.js";
 
 export interface TestAccount {
@@ -135,9 +135,10 @@ export async function setupBasicTestContext() {
 export async function makeUsageRequest(
   accountId: number,
   apiKeyId: number,
-  input: { userId?: string; units: bigint; idempotencyKey: string }
+  input: { userId?: string; units: bigint; idempotencyKey: string },
+  options?: UsageRequestOptions
 ) {
-  return processUsageRequest(accountId, input, apiKeyId);
+  return processUsageRequest(accountId, input, apiKeyId, options);
 }
 
 export async function getAccountCounter(accountId: number) {

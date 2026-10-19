@@ -65,10 +65,11 @@ export async function insertUsageRequest(
   periodStart: string,
   accountRemaining: bigint | null,
   userRemaining: bigint | null,
+  createdAt: string,
 ): Promise<UsageRequestRow[]> {
   const result = await tx.execute(sql`
-    INSERT INTO usage_requests (account_id, user_id, idempotency_key, request_hash, units, decision, rejection_reason, period_start, account_remaining, user_remaining)
-    VALUES (${accountId}, ${userId}, ${idempotencyKey}, ${requestHash}, ${units}, ${decision}, ${rejectionReason}, ${periodStart}, ${accountRemaining}, ${userRemaining})
+    INSERT INTO usage_requests (account_id, user_id, idempotency_key, request_hash, units, decision, rejection_reason, period_start, account_remaining, user_remaining, created_at)
+    VALUES (${accountId}, ${userId}, ${idempotencyKey}, ${requestHash}, ${units}, ${decision}, ${rejectionReason}, ${periodStart}, ${accountRemaining}, ${userRemaining}, ${createdAt})
     ON CONFLICT (account_id, idempotency_key) DO NOTHING
     RETURNING id, account_id as "accountId", user_id as "userId", idempotency_key as "idempotencyKey", request_hash as "requestHash", units, decision, rejection_reason as "rejectionReason", period_start as "periodStart", account_remaining as "accountRemaining", user_remaining as "userRemaining", created_at as "createdAt"
   `);

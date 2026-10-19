@@ -32,6 +32,11 @@ import {
 } from '../infrastructure/repositories/planRepository.js';
 import { ConflictError } from '../errors/AppError.js';
 
+/** ISO instant inside the given 'YYYY-MM-DD' period, so seeded counters stay INV-5-consistent. */
+function isoAtPeriodStart(periodStart: string): string {
+  return `${periodStart}T00:00:00.000Z`;
+}
+
 async function createTestAccount(name: string) {
   const db = getTestDb();
   const [account] = await db
@@ -142,7 +147,7 @@ describe('Boundary Integration Tests', () => {
 
       // Pre-consume 995 out of 1000
       const periodStart = formatDateForDb(getUtcMonthStart());
-      await upsertAndLockCounter(getTestDb(), BigInt(context.account.id), null, periodStart);
+      await upsertAndLockCounter(getTestDb(), BigInt(context.account.id), null, periodStart, isoAtPeriodStart(periodStart));
       await getTestDb()
         .update(usageCounters)
         .set({ counter: 995n })
@@ -176,7 +181,7 @@ describe('Boundary Integration Tests', () => {
 
       // Pre-consume 995 out of 1000
       const periodStart = formatDateForDb(getUtcMonthStart());
-      await upsertAndLockCounter(getTestDb(), BigInt(context.account.id), null, periodStart);
+      await upsertAndLockCounter(getTestDb(), BigInt(context.account.id), null, periodStart, isoAtPeriodStart(periodStart));
       await getTestDb()
         .update(usageCounters)
         .set({ counter: 995n })
@@ -208,7 +213,8 @@ describe('Boundary Integration Tests', () => {
         getTestDb(),
         BigInt(context.account.id),
         BigInt(context.user.id),
-        periodStart
+        periodStart,
+        isoAtPeriodStart(periodStart)
       );
       await getTestDb()
         .update(usageCounters)
@@ -245,7 +251,8 @@ describe('Boundary Integration Tests', () => {
         getTestDb(),
         BigInt(context.account.id),
         BigInt(context.user.id),
-        periodStart
+        periodStart,
+        isoAtPeriodStart(periodStart)
       );
       await getTestDb()
         .update(usageCounters)
@@ -279,7 +286,7 @@ describe('Boundary Integration Tests', () => {
 
       // Exhaust account quota completely
       const periodStart = formatDateForDb(getUtcMonthStart());
-      await upsertAndLockCounter(getTestDb(), BigInt(context.account.id), null, periodStart);
+      await upsertAndLockCounter(getTestDb(), BigInt(context.account.id), null, periodStart, isoAtPeriodStart(periodStart));
       await getTestDb()
         .update(usageCounters)
         .set({ counter: 1000n })
@@ -477,7 +484,8 @@ describe('Boundary Integration Tests', () => {
         getTestDb(),
         BigInt(context.account.id),
         null,
-        previousMonth.toISOString().split('T')[0]
+        previousMonth.toISOString().split('T')[0],
+        previousMonth.toISOString()
       );
       await getTestDb()
         .update(usageCounters)

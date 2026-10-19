@@ -12,6 +12,8 @@ export interface PersistUsageDecisionInput {
   units: bigint;
   evaluation: QuotaResult;
   periodStart: string;
+  /** Admission timestamp (ISO-8601, UTC); persisted as the row's created_at. */
+  createdAt: string;
   /** Counter row ids already locked by resolveUsageContext. */
   accountCounterId: bigint;
   userCounterId: bigint | null;
@@ -43,6 +45,7 @@ export async function persistUsageDecision(
     input.periodStart,
     input.evaluation.accountRemaining,
     input.evaluation.userRemaining ?? null,
+    input.createdAt,
   );
 
   if (insertResult.length === 0) {
