@@ -360,7 +360,7 @@ docs/
 - CORS is not configured (API-key auth is the access control); HTTPS terminates at a reverse proxy in production; set `TRUST_PROXY=true` only behind a trusted proxy
 - Rate limiting (per-IP + per-API-key, fail-closed), Zod validation at all boundaries, composite tenant FKs as the last line of defense
 
-Controls are described in more detail in [`SECURITY.md`](SECURITY.md). They have not been independently audited.
+These controls have not been independently audited.
 
 ---
 
