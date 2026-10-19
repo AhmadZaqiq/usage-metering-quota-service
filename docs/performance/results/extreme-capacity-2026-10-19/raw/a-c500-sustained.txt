@@ -1,1 +1,0 @@
-a-c500-sustained c=500 d=120s rps=122.5 total=14696 p50=3966 p90=4424 p99=5125 max=6932 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:14696]

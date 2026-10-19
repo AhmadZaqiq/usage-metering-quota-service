@@ -1,1 +1,0 @@
-a-c600-repeat c=600 d=60s rps=121.2 total=7271 p50=4755 p90=5263 p99=6027 max=7182 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:7271]

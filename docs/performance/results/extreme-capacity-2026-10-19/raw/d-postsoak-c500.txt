@@ -1,1 +1,0 @@
-d-postsoak-c500 c=500 d=60s rps=97.2 total=5829 p50=4940 p90=5522 p99=6391 max=7911 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:5829]

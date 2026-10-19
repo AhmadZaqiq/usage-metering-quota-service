@@ -1,1 +1,0 @@
-rate-limit-default c=50 d=5s rps=1990.2 total=9951 p50=18 p90=23 p99=115 max=2830 errors=0 timeouts=0 non2xx=9851 resets=0 statuses[200:100 429:9851]

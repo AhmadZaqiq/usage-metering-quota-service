@@ -355,7 +355,7 @@ Load testing was performed with Autocannon against the Docker Compose stack (app
 
 **Baseline (30 s, 10 connections):** 120.40 req/s mean (3,622 total), p50 17 ms, p90 242 ms, p99 546 ms, 0 errors / 0 timeouts / 0 non-2xx. After the run the database showed 3,622 accepted / 0 rejected and an account counter exactly equal to the accepted sum; the invariant verifier passed for the whole database. (`autocannon` does not emit a p95; reports never interpolate one.)
 
-A progressive stress campaign (10→1000 connections, idempotency storms, multi-user contention, invariant checks before/after) and an isolated extreme-capacity campaign (up to 800 connections, 10-minute soak, boundary-race proofs: exactly N accepted for N remaining) are recorded under [`docs/performance/`](docs/performance/):
+A progressive stress campaign (10→1000 connections, idempotency storms, multi-user contention, invariant checks before/after) and an isolated extreme-capacity campaign (up to 800 connections, 10-minute soak, boundary-race proofs: exactly N accepted for N remaining) are recorded under [`docs/performance/`](docs/performance/README.md):
 
 - 30 s baseline + method: [`docs/performance/2026-10-18-compose.md`](docs/performance/2026-10-18-compose.md)
 - Progressive stress: [`docs/performance/2026-10-18-stress.md`](docs/performance/2026-10-18-stress.md)

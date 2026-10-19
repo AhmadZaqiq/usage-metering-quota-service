@@ -37,7 +37,9 @@ coverage/
 *.tgz
 .cache/
 
-# Performance evidence: the stress reports link to these raw logs.
+# Performance evidence: raw campaign artifacts live in GitHub Release
+# perf-2026-10-19 (see docs/performance/README.md); the negation below still
+# covers any future top-level performance logs kept in Git.
 # Listed after the global *.log rule so the negation wins.
 !docs/performance/**/*.log
 
