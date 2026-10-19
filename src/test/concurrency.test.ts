@@ -10,6 +10,11 @@ import { processUsageRequest } from "../application/usage/usageService.js";
 import { formatDateForDb, getUtcMonthStart } from "../domain/date.js";
 import { upsertAndLockCounter } from "../infrastructure/repositories/counterRepository.js";
 
+/** ISO instant inside the given 'YYYY-MM-DD' period, so seeded counters stay INV-5-consistent. */
+function isoAtPeriodStart(periodStart: string): string {
+  return `${periodStart}T00:00:00.000Z`;
+}
+
 async function createTestAccount(name: string) {
   const db = getTestDb();
   const [account] = await db
@@ -119,7 +124,7 @@ describe("Concurrency Integration Tests", () => {
 
       // Set up: account has 1000 allowance, use 995, leaving 5
       const periodStart = formatDateForDb(getUtcMonthStart());
-      await upsertAndLockCounter(getTestDb(), BigInt(account.id), null, periodStart);
+      await upsertAndLockCounter(getTestDb(), BigInt(account.id), null, periodStart, isoAtPeriodStart(periodStart));
       await getTestDb()
         .update(usageCounters)
         .set({ counter: 995n })
@@ -161,7 +166,7 @@ describe("Concurrency Integration Tests", () => {
 
       // Pre-consume all 1000 units
       const periodStart = formatDateForDb(getUtcMonthStart());
-      await upsertAndLockCounter(getTestDb(), BigInt(context.account.id), null, periodStart);
+      await upsertAndLockCounter(getTestDb(), BigInt(context.account.id), null, periodStart, isoAtPeriodStart(periodStart));
       await getTestDb()
         .update(usageCounters)
         .set({ counter: 1000n })
@@ -194,7 +199,7 @@ describe("Concurrency Integration Tests", () => {
 
       // Pre-consume 95 out of 100 user units, leaving 5
       const periodStart = formatDateForDb(getUtcMonthStart());
-      await upsertAndLockCounter(getTestDb(), BigInt(context.account.id), BigInt(context.user.id), periodStart);
+      await upsertAndLockCounter(getTestDb(), BigInt(context.account.id), BigInt(context.user.id), periodStart, isoAtPeriodStart(periodStart));
       await getTestDb()
         .update(usageCounters)
         .set({ counter: 95n })
@@ -245,14 +250,14 @@ describe("Concurrency Integration Tests", () => {
 
       // Set account to 998/1000, user to 98/100
       const periodStart = formatDateForDb(getUtcMonthStart());
-      await upsertAndLockCounter(getTestDb(), BigInt(context.account.id), null, periodStart);
+      await upsertAndLockCounter(getTestDb(), BigInt(context.account.id), null, periodStart, isoAtPeriodStart(periodStart));
       await getTestDb()
         .update(usageCounters)
         .set({ counter: 998n })
         .where(eq(usageCounters.accountId, BigInt(context.account.id)))
         .execute();
 
-      await upsertAndLockCounter(getTestDb(), BigInt(context.account.id), BigInt(context.user.id), periodStart);
+      await upsertAndLockCounter(getTestDb(), BigInt(context.account.id), BigInt(context.user.id), periodStart, isoAtPeriodStart(periodStart));
       await getTestDb()
         .update(usageCounters)
         .set({ counter: 98n })
@@ -415,7 +420,7 @@ describe("Concurrency Integration Tests", () => {
 
       // Pre-consume all quota for account 1
       const periodStart = formatDateForDb(getUtcMonthStart());
-      await upsertAndLockCounter(getTestDb(), BigInt(context1.account.id), null, periodStart);
+      await upsertAndLockCounter(getTestDb(), BigInt(context1.account.id), null, periodStart, isoAtPeriodStart(periodStart));
       await getTestDb()
         .update(usageCounters)
         .set({ counter: 1000n })

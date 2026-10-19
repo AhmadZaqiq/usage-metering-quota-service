@@ -15,12 +15,13 @@ import { db } from '../db/client.js';
  *   INV-2  user counter    == sum of accepted units for that user/period
  *   INV-3  sum(user counters) <= account counter (per account/period)
  *   INV-4  stored remainings are never negative (clamp invariant persisted)
- *   INV-5  period_start is the UTC month of created_at (requests and counters)
- *          Known false-positive window: a request whose transaction crosses a
- *          UTC month boundary records period_start from admission-time JS Date
- *          but created_at from DB NOW() at commit; for that one request per
- *          month (~1s window) INV-5 may flag a legitimate row. Do not treat an
- *          INV-5-only report as corruption without inspecting the row.
+ *   INV-5  period_start is the UTC month of created_at (requests and counters).
+ *          By construction the admission timestamp produces both period_start
+ *          and created_at (sampled from clock_timestamp() after the account
+ *          admission lock), so new rows agree exactly. Rows written before
+ *          that fix, or imported from elsewhere, may still violate INV-5;
+ *          do not treat an INV-5-only report as corruption without inspecting
+ *          the row's age.
  *   INV-6  tenant pairing: user-scoped rows belong to the row's account
  *   INV-7  no duplicate (account, idempotency_key)
  *   INV-8  rejected requests contribute zero to counters (follows from INV-1/2

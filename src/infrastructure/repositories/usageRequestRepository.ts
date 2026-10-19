@@ -65,10 +65,11 @@ export async function insertUsageRequest(
   periodStart: string,
   accountRemaining: bigint | null,
   userRemaining: bigint | null,
+  createdAt: string,
 ): Promise<UsageRequestRow[]> {
   const result = await tx.execute(sql`
-    INSERT INTO usage_requests (account_id, user_id, idempotency_key, request_hash, units, decision, rejection_reason, period_start, account_remaining, user_remaining)
-    VALUES (${accountId}, ${userId}, ${idempotencyKey}, ${requestHash}, ${units}, ${decision}, ${rejectionReason}, ${periodStart}, ${accountRemaining}, ${userRemaining})
+    INSERT INTO usage_requests (account_id, user_id, idempotency_key, request_hash, units, decision, rejection_reason, period_start, account_remaining, user_remaining, created_at)
+    VALUES (${accountId}, ${userId}, ${idempotencyKey}, ${requestHash}, ${units}, ${decision}, ${rejectionReason}, ${periodStart}, ${accountRemaining}, ${userRemaining}, ${createdAt})
     ON CONFLICT (account_id, idempotency_key) DO NOTHING
     RETURNING id, account_id as "accountId", user_id as "userId", idempotency_key as "idempotencyKey", request_hash as "requestHash", units, decision, rejection_reason as "rejectionReason", period_start as "periodStart", account_remaining as "accountRemaining", user_remaining as "userRemaining", created_at as "createdAt"
   `);
@@ -77,6 +78,7 @@ export async function insertUsageRequest(
 
 export interface UsageHistoryItem {
   id: string;
+  requestId: string;
   userId: string | null;
   units: string;
   decision: string;
@@ -99,9 +101,15 @@ export async function getUsageHistory(
   tx: Transaction,
   accountId: bigint,
   page: number,
-  limit: number
+  limit: number,
+  userIdFilter?: bigint
 ): Promise<UsageHistoryResult> {
   const offset = (page - 1) * limit;
+  // undefined = no subject filter (includes account-scoped rows); a bigint
+  // restricts to that user's rows and therefore excludes NULL user_id rows.
+  const scoped = userIdFilter === undefined
+    ? eq(usageRequests.accountId, accountId)
+    : and(eq(usageRequests.accountId, accountId), eq(usageRequests.userId, userIdFilter))!;
 
   const [rows, countResult] = await Promise.all([
     tx
@@ -118,7 +126,7 @@ export async function getUsageHistory(
         createdAt: usageRequests.createdAt,
       })
       .from(usageRequests)
-      .where(eq(usageRequests.accountId, accountId))
+      .where(scoped)
       .orderBy(desc(usageRequests.createdAt))
       .limit(limit)
       .offset(offset)
@@ -126,14 +134,15 @@ export async function getUsageHistory(
     tx
       .select({ count: sql`count(*)` })
       .from(usageRequests)
-      .where(eq(usageRequests.accountId, accountId))
+      .where(scoped)
       .execute(),
   ]);
 
   const items: UsageHistoryItem[] = rows.map((row) => ({
     id: row.id.toString(),
+    // Public contract field name; storage column stays usage_requests.idempotency_key.
+    requestId: row.idempotencyKey,
     userId: row.userId ? row.userId.toString() : null,
-    idempotencyKey: row.idempotencyKey,
     units: row.units.toString(),
     decision: row.decision,
     rejectionReason: row.rejectionReason,

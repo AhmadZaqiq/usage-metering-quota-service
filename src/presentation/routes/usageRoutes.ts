@@ -50,9 +50,9 @@ router.get(
       throw new ValidationError("Invalid query parameters", parsed.error.flatten().fieldErrors);
     }
 
-    const { page, limit } = parsed.data;
+    const { page, limit, userId } = parsed.data;
 
-    const result = await getUsageHistory(BigInt(authReq.account.id), page, limit);
+    const result = await getUsageHistory(BigInt(authReq.account.id), page, limit, userId);
 
     return res.json({
       items: result.items,

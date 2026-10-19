@@ -27,7 +27,8 @@ export async function upsertAndLockCounter(
   tx: Transaction,
   accountId: bigint,
   userId: bigint | null,
-  periodStart: string
+  periodStart: string,
+  createdAt: string,
 ): Promise<CounterRow> {
   // Use raw SQL for upsert with partial unique indexes
   // Account-level: ON CONFLICT (account_id, period_start) WHERE user_id IS NULL
@@ -40,9 +41,12 @@ export async function upsertAndLockCounter(
     ? "user_id IS NULL"
     : "user_id IS NOT NULL";
 
+  // created_at is explicit on the insert side so a newly created period row
+  // carries the admission timestamp that chose its period; the conflict path
+  // (DO UPDATE) never touches created_at.
   const result = await tx.execute(sql`
-    INSERT INTO usage_counters (account_id, user_id, period_start, counter)
-    VALUES (${accountId}, ${userId}, ${periodStart}, 0)
+    INSERT INTO usage_counters (account_id, user_id, period_start, counter, created_at)
+    VALUES (${accountId}, ${userId}, ${periodStart}, 0, ${createdAt})
     ON CONFLICT (${sql.raw(conflictTarget)}) WHERE ${sql.raw(whereClause)}
     DO UPDATE SET counter = usage_counters.counter
     RETURNING id, account_id as "accountId", user_id as "userId", period_start as "periodStart", counter, created_at as "createdAt", updated_at as "updatedAt"

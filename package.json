@@ -15,6 +15,7 @@
     "test:watch": "vitest --config .config/vitest.config.ts",
     "test:coverage": "vitest run --coverage --config .config/vitest.config.ts",
     "verify": "npm run typecheck && npm run lint && npm run build && npm test",
+    "verify:all": "npm run verify && npm run verify:invariants",
     "db:generate": "drizzle-kit generate --config .config/drizzle.config.ts",
     "db:migrate": "tsx src/db/migrate.ts",
     "db:studio": "drizzle-kit studio --config .config/drizzle.config.ts",

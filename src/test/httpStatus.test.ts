@@ -125,4 +125,73 @@ describe("HTTP status and error handling", () => {
       },
     );
   });
+
+  describe("database pool acquisition timeout", () => {
+    interface Captured {
+      status: number | null;
+      body: unknown;
+      headers: Record<string, string>;
+    }
+
+    function callErrorHandler(err: Error): Captured {
+      const captured: Captured = { status: null, body: undefined, headers: {} };
+      const mockReq = {} as never;
+      const mockRes = {
+        getHeader: () => "unknown",
+        setHeader: (name: string, value: string) => {
+          captured.headers[name] = value;
+          return mockRes;
+        },
+        status: (code: number) => {
+          captured.status = code;
+          return mockRes;
+        },
+        json: (body: unknown) => {
+          captured.body = body;
+          return mockRes;
+        },
+      } as never;
+
+      errorHandler(err, mockReq, mockRes, () => {});
+      return captured;
+    }
+
+    it("maps the exact pg-pool acquire timeout (no SQLSTATE) to 503 DATABASE_CAPACITY_EXCEEDED with Retry-After: 1", () => {
+      const captured = callErrorHandler(new Error("timeout exceeded when trying to connect"));
+
+      expect(captured.status).toBe(503);
+      const error = (captured.body as { error: { code: string; message: string; details?: unknown } }).error;
+      expect(error.code).toBe("DATABASE_CAPACITY_EXCEEDED");
+      expect(error.message).toBe("Database is temporarily at capacity, please retry");
+      expect(error.details).toBeUndefined();
+      expect(captured.headers["Retry-After"]).toBe("1");
+    });
+
+    it("still maps an unrelated generic error to 500 with no Retry-After", () => {
+      const captured = callErrorHandler(new Error("something unexpected broke"));
+
+      expect(captured.status).toBe(500);
+      const error = (captured.body as { error: { code: string } }).error;
+      expect(error.code).toBe("INTERNAL_ERROR");
+      expect(captured.headers["Retry-After"]).toBeUndefined();
+    });
+
+    it("does not classify a near-miss message as pool exhaustion", () => {
+      const captured = callErrorHandler(new Error("timeout exceeded when trying to connect to primary"));
+
+      expect(captured.status).toBe(500);
+      expect((captured.body as { error: { code: string } }).error.code).toBe("INTERNAL_ERROR");
+      expect(captured.headers["Retry-After"]).toBeUndefined();
+    });
+
+    it("prefers the SQLSTATE branch when the pool-timeout message carries a code", () => {
+      const captured = callErrorHandler(
+        Object.assign(new Error("timeout exceeded when trying to connect"), { code: "40001" }),
+      );
+
+      expect(captured.status).toBe(503);
+      expect((captured.body as { error: { code: string } }).error.code).toBe("TRANSACTION_CONFLICT");
+      expect(captured.headers["Retry-After"]).toBeUndefined();
+    });
+  });
 });

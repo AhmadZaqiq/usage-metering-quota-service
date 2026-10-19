@@ -4,13 +4,17 @@ import * as fs from 'fs';
 /**
  * Example tenant client.
  *
- * Two modes:
- *  - Demo (default): runs an end-to-end scenario walkthrough against a
+ * Commands:
+ *  - demo (default): runs an end-to-end scenario walkthrough against a
  *    running service — health gate, accepted usage, user/account/per-request
  *    rejections, immediate plan changes, idempotent replay, credential and
  *    input rejections, history + assignment summary. Output is deterministic
  *    because the demo normalizes plan allowances before asserting remainings.
- *  - Single request (-n/-i): fires one POST /usage and prints the response.
+ *    When DATABASE_URL is set, a successful demo finishes by verifying the
+ *    accounting invariants in-process.
+ *  - consume: send one POST /usage request (legacy -n/-i flags map through).
+ *  - usage --userId: GET /usage filtered to a single user.
+ *  - history: GET /usage, paginated.
  *
  * Exit codes: 0 = success, 1 = failure. The full API key is never printed;
  * only the public prefix is shown.
@@ -21,33 +25,49 @@ const DEFAULT_BASE_URL = 'http://localhost:3000';
 const PROBE_ALLOWANCE = 1_000_000n;
 const ACCOUNT_HEADROOM = 40n;
 
-const HELP = `Usage: client [options]
+const HELP = `Usage: client [command] [options]
 
-Modes:
-  (default)                Run the end-to-end demo scenario walkthrough.
-  -n <units> -i <key>      Send a single POST /usage request and print the response.
+Commands:
+  demo                       Run the end-to-end demo scenario walkthrough (default).
+                             With DATABASE_URL set, also verifies accounting invariants.
+  consume                    Send one POST /usage request.
+      --userId <id>          clientUserId (optional; omitted = account-scoped request)
+  -n, --units <units>        Positive integer units, string form (required)
+  -i, --requestId <key>      Client idempotency key; send the same value to retry (required)
+                             --idempotencyKey is accepted as a deprecated alias for -i
+  usage                      GET /usage filtered to one user.
+      --userId <id>          clientUserId to filter by (required)
+      --page <n>             Page number (default 1)
+      --limit <n>            Page size (default 50)
+  history                    GET /usage, paginated.
+      --page <n>             Page number (default 1)
+      --limit <n>            Page size (default 50)
 
 Options:
   -u, --url <url>          Base URL of the service (default: ${DEFAULT_BASE_URL}, env BASE_URL)
   -k, --key <api-key>      API key (otherwise read from --key-file)
       --key-file <path>    API key file (default: ${DEFAULT_KEY_FILE})
-      --userId <id>        clientUserId for single-request mode
   -h, --help               Show this help
 
 Exit codes: 0 success, 1 failure
 `;
 
+type Command = 'demo' | 'consume' | 'usage' | 'history';
+
 interface Options {
+  command: Command;
   baseUrl: string;
   key?: string;
   keyFile: string;
   units?: string;
   userId?: string;
-  idempotencyKey?: string;
+  requestId?: string;
+  page?: number;
+  limit?: number;
 }
 
 function parseOptions(): Options {
-  const { values } = parseArgs({
+  const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
     options: {
       url: { type: 'string', short: 'u', default: process.env.BASE_URL ?? DEFAULT_BASE_URL },
@@ -55,11 +75,15 @@ function parseOptions(): Options {
       keyFile: { type: 'string', default: DEFAULT_KEY_FILE },
       units: { type: 'string', short: 'n' },
       userId: { type: 'string' },
-      idempotencyKey: { type: 'string', short: 'i' },
+      requestId: { type: 'string', short: 'i' },
+      // Deprecated alias for requestId.
+      idempotencyKey: { type: 'string' },
+      page: { type: 'string' },
+      limit: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
     strict: true,
-    allowPositionals: false,
+    allowPositionals: true,
   });
 
   if (values.help) {
@@ -76,13 +100,43 @@ function parseOptions(): Options {
     }
   }
 
+  // Legacy shape: flags without a subcommand mean a single consume request.
+  let command = positionals[0] as Command | undefined;
+  if (
+    command === undefined &&
+    (values.units !== undefined || values.requestId !== undefined || values.idempotencyKey !== undefined)
+  ) {
+    command = 'consume';
+  }
+  if (command === undefined) {
+    command = 'demo';
+  }
+  if (!['demo', 'consume', 'usage', 'history'].includes(command)) {
+    console.error(`Unknown command: ${command}`);
+    console.error('Run with --help for usage.');
+    process.exit(1);
+  }
+
+  const parsePositiveInt = (raw: string | undefined, label: string): number | undefined => {
+    if (raw === undefined) return undefined;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1) {
+      console.error(`${label} must be a positive integer, got: ${raw}`);
+      process.exit(1);
+    }
+    return n;
+  };
+
   return {
+    command,
     baseUrl: values.url,
     key,
     keyFile: values.keyFile,
     units: values.units,
     userId: values.userId,
-    idempotencyKey: values.idempotencyKey,
+    requestId: values.requestId ?? values.idempotencyKey,
+    page: parsePositiveInt(values.page, '--page'),
+    limit: parsePositiveInt(values.limit, '--limit'),
   };
 }
 
@@ -348,7 +402,7 @@ async function ensureDemoPlansAndUsers(
 async function probeUsed(api: ApiClient, report: ScenarioReport, runId: string): Promise<bigint> {
   const probe = await api.request('POST', '/usage', {
     units: '1',
-    idempotencyKey: `demo-probe-${runId}`,
+    requestId: `demo-probe-${runId}`,
   });
   if (probe.status !== 200 || probe.data.decision !== 'accepted') {
     throw new DemoError(
@@ -386,10 +440,10 @@ async function runDemo(opts: Options, key: string): Promise<number> {
       `got ${headroomPatch.status}`
     );
 
-    const usageBody = (userId: string, units: string, idempotencyKey: string) => ({
+    const usageBody = (userId: string, units: string, requestId: string) => ({
       userId,
       units,
-      idempotencyKey,
+      requestId,
     });
     const s1Key = `demo-s1-${runId}`;
 
@@ -610,21 +664,21 @@ async function runDemo(opts: Options, key: string): Promise<number> {
     const noAuth = await api.request(
       'POST',
       '/usage',
-      { units: '1', idempotencyKey: `demo-s7a-${runId}` },
+      { units: '1', requestId: `demo-s7a-${runId}` },
       { auth: false }
     );
     report.expect('S7 missing credentials -> 401', noAuth.status === 401, `got ${noAuth.status}`);
     const wrongKey = await api.request(
       'POST',
       '/usage',
-      { units: '1', idempotencyKey: `demo-s7b-${runId}` },
+      { units: '1', requestId: `demo-s7b-${runId}` },
       { keyOverride: `${key.split('.')[0]}.${'0'.repeat(64)}` }
     );
     report.expect('S7 wrong secret -> 401', wrongKey.status === 401, `got ${wrongKey.status}`);
     const zeroUnits = await api.request('POST', '/usage', {
       userId: setup.userIds[0],
       units: '0',
-      idempotencyKey: `demo-s7c-${runId}`,
+      requestId: `demo-s7c-${runId}`,
     });
     report.expect(
       'S7 invalid units -> 400 VALIDATION_ERROR',
@@ -656,18 +710,18 @@ async function runDemo(opts: Options, key: string): Promise<number> {
     const history = await api.request('GET', '/usage?limit=50');
     report.expect('S8 history readable', history.status === 200, `got ${history.status}`);
     const items = history.data.items as {
-      idempotencyKey: string;
+      requestId: string;
       decision: string;
       units: string;
     }[];
     const demoPrefix = `demo-`;
-    const demoItems = items.filter((i) => i.idempotencyKey.startsWith(demoPrefix));
+    const demoItems = items.filter((i) => i.requestId.startsWith(demoPrefix));
     const acceptedCount = demoItems.filter((i) => i.decision === 'accepted').length;
     const rejectedCount = demoItems.filter((i) => i.decision === 'rejected').length;
     // A rejected request must be recorded in history with its decision, not
     // silently dropped - auditability of rejections is part of the contract.
     const s2bKey = `demo-s2b-${runId}`;
-    const s2bRow = demoItems.find((i) => i.idempotencyKey === s2bKey);
+    const s2bRow = demoItems.find((i) => i.requestId === s2bKey);
     report.expect(
       'S8 rejected request is preserved in history with decision=rejected',
       s2bRow !== undefined && s2bRow.decision === 'rejected',
@@ -693,9 +747,9 @@ async function runDemo(opts: Options, key: string): Promise<number> {
   return report.failureCount === 0 ? 0 : 1;
 }
 
-async function runSingleRequest(opts: Options, key: string): Promise<number> {
-  if (!opts.units || !opts.idempotencyKey) {
-    console.error('Single-request mode requires both -n <units> and -i <idempotency-key>.');
+async function runConsume(opts: Options, key: string): Promise<number> {
+  if (!opts.units || !opts.requestId) {
+    console.error('consume command requires both -n <units> and -i <request-id>.');
     console.error('Run with --help for usage.');
     return 1;
   }
@@ -703,7 +757,7 @@ async function runSingleRequest(opts: Options, key: string): Promise<number> {
   const api = new ApiClient(opts.baseUrl, key);
   const body: Record<string, unknown> = {
     units: opts.units,
-    idempotencyKey: opts.idempotencyKey,
+    requestId: opts.requestId,
   };
   if (opts.userId) body.userId = opts.userId;
 
@@ -714,15 +768,96 @@ async function runSingleRequest(opts: Options, key: string): Promise<number> {
   return res.status >= 200 && res.status < 300 ? 0 : 1;
 }
 
+function historyQuery(opts: Options): URLSearchParams {
+  const params = new URLSearchParams();
+  if (opts.page !== undefined) params.set('page', String(opts.page));
+  if (opts.limit !== undefined) params.set('limit', String(opts.limit));
+  return params;
+}
+
+async function printHistory(opts: Options, key: string, params: URLSearchParams): Promise<number> {
+  const query = params.toString();
+  const path = query ? `/usage?${query}` : '/usage';
+  const api = new ApiClient(opts.baseUrl, key);
+  console.log(`GET ${opts.baseUrl}${path}  (key ${maskKey(key)})`);
+  const res = await api.request('GET', path);
+  console.log(`Status: ${res.status}`);
+  console.log(JSON.stringify(res.data, null, 2));
+  return res.status >= 200 && res.status < 300 ? 0 : 1;
+}
+
+async function runUsage(opts: Options, key: string): Promise<number> {
+  if (!opts.userId) {
+    console.error('usage command requires --userId <clientUserId>.');
+    console.error('Run with --help for usage.');
+    return 1;
+  }
+  const params = historyQuery(opts);
+  params.set('userId', opts.userId);
+  return await printHistory(opts, key, params);
+}
+
+async function runHistory(opts: Options, key: string): Promise<number> {
+  return await printHistory(opts, key, historyQuery(opts));
+}
+
+/**
+ * Verify accounting invariants in-process after a successful demo. Skipped
+ * (not failed) when DATABASE_URL is unset, because verify-invariants connects
+ * to PostgreSQL directly — importing it without the env would throw.
+ */
+async function runInvariantStep(): Promise<{ ran: boolean; ok: boolean }> {
+  if (!process.env.DATABASE_URL) {
+    console.log('  Invariant check skipped: DATABASE_URL not set.');
+    return { ran: false, ok: true };
+  }
+  try {
+    const { verify } = await import('./verify-invariants.js');
+    const violations = await verify(process.env.BOOTSTRAP_ACCOUNT_NAME);
+    if (violations.length > 0) {
+      console.error(`\n${violations.length} invariant violation(s):`);
+      for (const v of violations) {
+        console.error(`  [${v.check}] ${v.detail}`);
+      }
+      return { ran: true, ok: false };
+    }
+    return { ran: true, ok: true };
+  } catch (err) {
+    console.error(`Invariant check failed to run: ${(err as Error).message}`);
+    return { ran: true, ok: false };
+  }
+}
+
 async function main(): Promise<number> {
   const opts = parseOptions();
   const key = requireKey(opts);
 
-  const singleMode = opts.units !== undefined || opts.idempotencyKey !== undefined;
-  if (singleMode) {
-    return await runSingleRequest(opts, key);
+  switch (opts.command) {
+    case 'consume':
+      return await runConsume(opts, key);
+    case 'usage':
+      return await runUsage(opts, key);
+    case 'history':
+      return await runHistory(opts, key);
+    case 'demo':
+    default: {
+      const demoCode = await runDemo(opts, key);
+      if (demoCode !== 0) {
+        return demoCode;
+      }
+      console.log('All demo assertions passed.');
+
+      const invariants = await runInvariantStep();
+      if (!invariants.ran) {
+        return 0;
+      }
+      if (!invariants.ok) {
+        return 1;
+      }
+      console.log('All accounting invariants passed.');
+      return 0;
+    }
   }
-  return await runDemo(opts, key);
 }
 
 main()

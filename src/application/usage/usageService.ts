@@ -3,7 +3,8 @@ import { MAX_UNITS_PER_REQUEST_BIGINT } from "../../config/index.js";
 import { evaluateQuota, type QuotaResult, type RejectionReason, type LimitScope } from "../../domain/quotaEvaluator.js";
 import { computeRequestHash } from "../../domain/idempotency.js";
 import { formatDateForDb, getUtcMonthStart } from "../../domain/date.js";
-import { ValidationError, ConflictError } from "../../errors/AppError.js";
+import { ValidationError, ConflictError, NotFoundError } from "../../errors/AppError.js";
+import { lockAccountForAdmission, readClockTimestamp } from "../../infrastructure/repositories/accountRepository.js";
 import { resolveUserId, resolveUsageContext } from "./resolveUsageContext.js";
 import { findReplayDecision } from "./replayUsageRequest.js";
 import { persistUsageDecision } from "./persistUsageDecision.js";
@@ -24,11 +25,28 @@ export interface QuotaDecision {
   periodStart: string;
 }
 
+export interface UsageRequestOptions {
+  /**
+   * Test seam: supplies the admission timestamp (ISO-8601, UTC) that decides
+   * both the quota period and the persisted created_at metadata. Defaults to
+   * the database clock (`clock_timestamp()`) sampled after the account row
+   * lock is granted, so the timestamp observes the moment of admission, not
+   * the moment the request started waiting.
+   */
+  admissionTimestamp?: () => string;
+}
+
 /**
  * Process one usage request end to end inside a single transaction:
  *
- *   resolve user -> idempotent replay check -> lock counters + resolve plans
+ *   resolve user -> idempotent replay check -> lock the account row (admission
+ *   lock) -> sample the admission clock -> lock counters + resolve plans
  *   -> evaluate quota -> persist decision (+ counters, + last-used stamp)
+ *
+ * The admission timestamp is sampled only after the period-independent
+ * account row lock is granted, so a request queued across a UTC month
+ * boundary is attributed to the month in which it is admitted. Lock order:
+ * accounts row -> account counter -> user counter -> api key row.
  *
  * Replays return the originally committed decision without re-evaluating
  * quota or taking counter locks; concurrent duplicates converge on the
@@ -37,7 +55,8 @@ export interface QuotaDecision {
 export async function processUsageRequest(
   accountId: number,
   input: UsageInput,
-  apiKeyId: number
+  apiKeyId: number,
+  options?: UsageRequestOptions
 ): Promise<QuotaDecision> {
   // Validate idempotency key (structural validation, not business rule)
   if (!input.idempotencyKey || input.idempotencyKey.length === 0) {
@@ -46,9 +65,6 @@ export async function processUsageRequest(
   if (input.idempotencyKey.length > 255) {
     throw new ValidationError("Idempotency key must not exceed 255 characters");
   }
-
-  const periodStartDate = getUtcMonthStart();
-  const periodStart = formatDateForDb(periodStartDate);
 
   const requestHash = computeRequestHash({
     accountId,
@@ -60,7 +76,8 @@ export async function processUsageRequest(
     const userId = await resolveUserId(tx, BigInt(accountId), input.userId);
 
     // Check idempotency first - before quota evaluation - so a replay returns
-    // the cached decision with the original remaining quota.
+    // the cached decision with the original remaining quota. The replay path
+    // needs no locks and no clock: it answers from the stored row.
     const replay = await findReplayDecision(
       tx,
       BigInt(accountId),
@@ -71,11 +88,24 @@ export async function processUsageRequest(
       return replay;
     }
 
+    // Period-independent admission lock, then the admission clock. This
+    // ordering is the month-boundary invariant: the timestamp that picks the
+    // period is observed while holding the lock that serializes the account.
+    const locked = await lockAccountForAdmission(tx, BigInt(accountId));
+    if (!locked) {
+      throw new NotFoundError("Account not found");
+    }
+    const admissionIso = options?.admissionTimestamp
+      ? options.admissionTimestamp()
+      : await readClockTimestamp(tx);
+    const periodStart = formatDateForDb(getUtcMonthStart(new Date(admissionIso)));
+
     const context = await resolveUsageContext(
       tx,
       BigInt(accountId),
       userId,
-      periodStart
+      periodStart,
+      admissionIso
     );
 
     const evaluation = evaluateQuota({
@@ -102,6 +132,7 @@ export async function processUsageRequest(
       units: input.units,
       evaluation,
       periodStart,
+      createdAt: admissionIso,
       accountCounterId: context.accountCounter.id,
       userCounterId: context.userCounter?.id ?? null,
       apiKeyId: BigInt(apiKeyId),

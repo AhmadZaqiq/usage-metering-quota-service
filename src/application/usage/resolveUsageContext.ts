@@ -51,10 +51,11 @@ export async function resolveUsageContext(
   accountId: bigint,
   userId: bigint | null,
   periodStart: string,
+  createdAt: string,
 ): Promise<UsageContext> {
-  const accountCounter = await upsertAndLockCounter(tx, accountId, null, periodStart);
+  const accountCounter = await upsertAndLockCounter(tx, accountId, null, periodStart, createdAt);
   const userCounter =
-    userId !== null ? await upsertAndLockCounter(tx, accountId, userId, periodStart) : null;
+    userId !== null ? await upsertAndLockCounter(tx, accountId, userId, periodStart, createdAt) : null;
 
   const accountAssignment = await selectCurrentAssignmentByAccount(tx, accountId);
   const userAssignment = userId ? await selectCurrentAssignmentByUser(tx, userId) : null;
