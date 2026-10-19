@@ -1,0 +1,53 @@
+{
+  "label": "c3-accounting-consistency",
+  "checkedAt": "2026-10-18T23:03:39.572359+00:00",
+  "users": {
+    "hot-u1": {
+      "counter": "1504",
+      "committedRows": 1504,
+      "match": true
+    },
+    "hot-u2": {
+      "counter": "1484",
+      "committedRows": 1484,
+      "match": true
+    },
+    "hot-u3": {
+      "counter": "1491",
+      "committedRows": 1491,
+      "match": true
+    },
+    "hot-u4": {
+      "counter": "1485",
+      "committedRows": 1485,
+      "match": true
+    },
+    "hot-u5": {
+      "counter": "1453",
+      "committedRows": 1453,
+      "match": true
+    },
+    "hot-u6": {
+      "counter": "1454",
+      "committedRows": 1454,
+      "match": true
+    },
+    "hot-u7": {
+      "counter": "1482",
+      "committedRows": 1482,
+      "match": true
+    },
+    "hot-u8": {
+      "counter": "1470",
+      "committedRows": 1470,
+      "match": true
+    }
+  },
+  "account": {
+    "counter": "161341",
+    "committedRows": "161341",
+    "match": true,
+    "sumUserCounters": "11823"
+  },
+  "allMatch": true
+}

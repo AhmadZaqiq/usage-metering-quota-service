@@ -1,0 +1,1 @@
+b-16x25 accounts=16 x c=25 (total 400) aggregateRps=181 perAccount[min..max]=11.0..11.8 p50[med]=2010 p99[med]=6383 errors=0 timeouts=0 non2xx=209 resets=0

@@ -1,0 +1,51 @@
+{
+  "accounts": [
+    {
+      "name": "extreme-hot",
+      "keyName": "extreme-hot-key",
+      "accountAllowance": "1000000000000",
+      "userAllowance": "1000000000",
+      "maxUnitsPerRequest": "10000",
+      "users": ["hot-u1", "hot-u2", "hot-u3", "hot-u4", "hot-u5", "hot-u6", "hot-u7", "hot-u8"]
+    },
+    { "name": "extreme-b00", "keyName": "extreme-b00-key", "accountAllowance": "1000000000000", "userAllowance": "1000000000", "users": ["b00-u1"] },
+    { "name": "extreme-b01", "keyName": "extreme-b01-key", "accountAllowance": "1000000000000", "userAllowance": "1000000000", "users": ["b01-u1"] },
+    { "name": "extreme-b02", "keyName": "extreme-b02-key", "accountAllowance": "1000000000000", "userAllowance": "1000000000", "users": ["b02-u1"] },
+    { "name": "extreme-b03", "keyName": "extreme-b03-key", "accountAllowance": "1000000000000", "userAllowance": "1000000000", "users": ["b03-u1"] },
+    { "name": "extreme-b04", "keyName": "extreme-b04-key", "accountAllowance": "1000000000000", "userAllowance": "1000000000", "users": ["b04-u1"] },
+    { "name": "extreme-b05", "keyName": "extreme-b05-key", "accountAllowance": "1000000000000", "userAllowance": "1000000000", "users": ["b05-u1"] },
+    { "name": "extreme-b06", "keyName": "extreme-b06-key", "accountAllowance": "1000000000000", "userAllowance": "1000000000", "users": ["b06-u1"] },
+    { "name": "extreme-b07", "keyName": "extreme-b07-key", "accountAllowance": "1000000000000", "userAllowance": "1000000000", "users": ["b07-u1"] },
+    { "name": "extreme-b08", "keyName": "extreme-b08-key", "accountAllowance": "1000000000000", "userAllowance": "1000000000", "users": ["b08-u1"] },
+    { "name": "extreme-b09", "keyName": "extreme-b09-key", "accountAllowance": "1000000000000", "userAllowance": "1000000000", "users": ["b09-u1"] },
+    { "name": "extreme-b10", "keyName": "extreme-b10-key", "accountAllowance": "1000000000000", "userAllowance": "1000000000", "users": ["b10-u1"] },
+    { "name": "extreme-b11", "keyName": "extreme-b11-key", "accountAllowance": "1000000000000", "userAllowance": "1000000000", "users": ["b11-u1"] },
+    { "name": "extreme-b12", "keyName": "extreme-b12-key", "accountAllowance": "1000000000000", "userAllowance": "1000000000", "users": ["b12-u1"] },
+    { "name": "extreme-b13", "keyName": "extreme-b13-key", "accountAllowance": "1000000000000", "userAllowance": "1000000000", "users": ["b13-u1"] },
+    { "name": "extreme-b14", "keyName": "extreme-b14-key", "accountAllowance": "1000000000000", "userAllowance": "1000000000", "users": ["b14-u1"] },
+    { "name": "extreme-b15", "keyName": "extreme-b15-key", "accountAllowance": "1000000000000", "userAllowance": "1000000000", "users": ["b15-u1"] },
+    {
+      "name": "extreme-boundary-a",
+      "keyName": "extreme-boundary-a-key",
+      "accountAllowance": "50",
+      "userAllowance": "10",
+      "maxUnitsPerRequest": "10000",
+      "users": ["boundary-a-u1"]
+    },
+    {
+      "name": "extreme-boundary-u",
+      "keyName": "extreme-boundary-u-key",
+      "accountAllowance": "1000000",
+      "userAllowance": "10",
+      "maxUnitsPerRequest": "10000",
+      "users": ["boundary-u-u1"]
+    },
+    {
+      "name": "extreme-idem",
+      "keyName": "extreme-idem-key",
+      "accountAllowance": "1000000000000",
+      "userAllowance": "1000000000",
+      "users": ["idem-u1"]
+    }
+  ]
+}

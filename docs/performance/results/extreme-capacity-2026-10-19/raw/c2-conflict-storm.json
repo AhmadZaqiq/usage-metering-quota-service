@@ -1,0 +1,36 @@
+{
+  "idempotencyKey": "probe-conflict-1792364338713-5b4pgn",
+  "mode": "conflict",
+  "count": 300,
+  "unitsA": "1",
+  "unitsB": "2",
+  "userId": null,
+  "wallMs": 1294,
+  "statusCounts": {
+    "200": 150,
+    "409": 150
+  },
+  "decisionCounts": {
+    "accepted": 150,
+    "none": 150
+  },
+  "rejectionReasons": {
+    "none": 300
+  },
+  "errorCodes": {
+    "none": 150,
+    "CONFLICT": 150
+  },
+  "distinctAccountRemainings": [
+    "999999999998"
+  ],
+  "distinctUserRemainings": [],
+  "sampleBody": {
+    "status": 200,
+    "decision": "accepted",
+    "reason": null,
+    "code": null,
+    "accountRemaining": "999999999998",
+    "userRemaining": null
+  }
+}

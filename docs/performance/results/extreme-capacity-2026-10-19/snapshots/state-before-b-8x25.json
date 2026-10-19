@@ -1,0 +1,175 @@
+{
+  "captured_at": "2026-10-18T22:52:06.995772+00:00",
+  "accounts": 21,
+  "users": 33,
+  "plans": 47,
+  "api_keys": 22,
+  "usage_requests_total": 176223,
+  "usage_requests_accepted": 176217,
+  "usage_requests_rejected": 6,
+  "accepted_units_sum": "176249",
+  "rejected_units_sum": "26",
+  "rejected_with_units_gt_zero": 6,
+  "account_counters": [
+    {
+      "account_id": "1",
+      "period_start": "2026-10-01",
+      "counter": "44",
+      "updated_at": "2026-10-18T22:51:38.00134+00:00"
+    },
+    {
+      "account_id": "10",
+      "period_start": "2026-10-01",
+      "counter": "1860",
+      "updated_at": "2026-10-18T22:33:33.092399+00:00"
+    },
+    {
+      "account_id": "2",
+      "period_start": "2026-10-01",
+      "counter": "161341",
+      "updated_at": "2026-10-18T22:32:26.851546+00:00"
+    },
+    {
+      "account_id": "3",
+      "period_start": "2026-10-01",
+      "counter": "1830",
+      "updated_at": "2026-10-18T22:33:33.118441+00:00"
+    },
+    {
+      "account_id": "4",
+      "period_start": "2026-10-01",
+      "counter": "1859",
+      "updated_at": "2026-10-18T22:33:33.066421+00:00"
+    },
+    {
+      "account_id": "5",
+      "period_start": "2026-10-01",
+      "counter": "1858",
+      "updated_at": "2026-10-18T22:33:33.091317+00:00"
+    },
+    {
+      "account_id": "6",
+      "period_start": "2026-10-01",
+      "counter": "1875",
+      "updated_at": "2026-10-18T22:33:33.087623+00:00"
+    },
+    {
+      "account_id": "7",
+      "period_start": "2026-10-01",
+      "counter": "1847",
+      "updated_at": "2026-10-18T22:33:33.041224+00:00"
+    },
+    {
+      "account_id": "8",
+      "period_start": "2026-10-01",
+      "counter": "1874",
+      "updated_at": "2026-10-18T22:33:33.12482+00:00"
+    },
+    {
+      "account_id": "9",
+      "period_start": "2026-10-01",
+      "counter": "1861",
+      "updated_at": "2026-10-18T22:33:33.093981+00:00"
+    }
+  ],
+  "user_counters": [
+    {
+      "account_id": "1",
+      "user_id": "1",
+      "period_start": "2026-10-01",
+      "counter": "6"
+    },
+    {
+      "account_id": "1",
+      "user_id": "2",
+      "period_start": "2026-10-01",
+      "counter": "5"
+    },
+    {
+      "account_id": "1",
+      "user_id": "3",
+      "period_start": "2026-10-01",
+      "counter": "10"
+    },
+    {
+      "account_id": "1",
+      "user_id": "31",
+      "period_start": "2026-10-01",
+      "counter": "6"
+    },
+    {
+      "account_id": "1",
+      "user_id": "32",
+      "period_start": "2026-10-01",
+      "counter": "5"
+    },
+    {
+      "account_id": "1",
+      "user_id": "33",
+      "period_start": "2026-10-01",
+      "counter": "10"
+    },
+    {
+      "account_id": "2",
+      "user_id": "10",
+      "period_start": "2026-10-01",
+      "counter": "1482"
+    },
+    {
+      "account_id": "2",
+      "user_id": "11",
+      "period_start": "2026-10-01",
+      "counter": "1470"
+    },
+    {
+      "account_id": "2",
+      "user_id": "4",
+      "period_start": "2026-10-01",
+      "counter": "1504"
+    },
+    {
+      "account_id": "2",
+      "user_id": "5",
+      "period_start": "2026-10-01",
+      "counter": "1484"
+    },
+    {
+      "account_id": "2",
+      "user_id": "6",
+      "period_start": "2026-10-01",
+      "counter": "1491"
+    },
+    {
+      "account_id": "2",
+      "user_id": "7",
+      "period_start": "2026-10-01",
+      "counter": "1485"
+    },
+    {
+      "account_id": "2",
+      "user_id": "8",
+      "period_start": "2026-10-01",
+      "counter": "1453"
+    },
+    {
+      "account_id": "2",
+      "user_id": "9",
+      "period_start": "2026-10-01",
+      "counter": "1454"
+    }
+  ],
+  "negative_remainings": 0,
+  "duplicate_idempotency_keys": 0,
+  "period_start_mismatches_requests": 0,
+  "rejected_rows_in_counters_check": 0,
+  "pg_stat_database": {
+    "xact_commit": "181",
+    "xact_rollback": "0",
+    "deadlocks": "0",
+    "conflicts": "0",
+    "blks_read": "20045",
+    "blks_hit": "94213",
+    "temp_files": "0",
+    "temp_bytes": "0"
+  }
+}

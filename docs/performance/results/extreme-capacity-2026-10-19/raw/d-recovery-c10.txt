@@ -1,0 +1,1 @@
+d-recovery-c10 c=10 d=30s rps=99.7 total=2992 p50=23 p90=277 p99=687 max=1514 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:2992]

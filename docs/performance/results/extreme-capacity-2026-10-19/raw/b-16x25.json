@@ -1,0 +1,489 @@
+{
+  "meta": {
+    "label": "b-16x25",
+    "kind": "multi-account",
+    "accounts": 16,
+    "usersPerAccount": null,
+    "connectionsPerAccount": 25,
+    "totalConnections": 400,
+    "durationSec": 60,
+    "units": "1",
+    "url": "http://localhost:3100",
+    "startedAt": "2026-10-18T22:54:54.660Z",
+    "finishedAt": "2026-10-18T22:55:55.865Z",
+    "keysPrefixes": [
+      "5fcdaddad7bdeb",
+      "80757b0cd08fd9",
+      "4c4927767a8823",
+      "14c0d0033a9b7c",
+      "7de8f7c39d4366",
+      "075229d2d06e38",
+      "13823a568bf2ba",
+      "33cbe070d6cde8",
+      "0caa7072b434c3",
+      "54b1787b64d74c",
+      "bd34b321ddf116",
+      "f966e3069d98be",
+      "866e173feb8ba9",
+      "6b619d3c966ea0",
+      "dacc022f6a2bec",
+      "bf7aaefae869b7"
+    ],
+    "users": []
+  },
+  "aggregate": {
+    "totalRequests": 10860,
+    "requestsPerSec": 181,
+    "perAccountRps": [
+      11.17,
+      11.32,
+      11.57,
+      11.2,
+      11.3,
+      11.49,
+      11.79,
+      11.05,
+      11.82,
+      11.27,
+      11.39,
+      11.09,
+      11,
+      11.1,
+      11.04,
+      11.45
+    ],
+    "perAccountRpsMin": 11,
+    "perAccountRpsMax": 11.82,
+    "p50": {
+      "min": 1989,
+      "median": 2010,
+      "max": 2017
+    },
+    "p99": {
+      "min": 5024,
+      "median": 6383,
+      "max": 8777
+    },
+    "latencyMaxAcrossAccounts": 8982,
+    "errors": 0,
+    "timeouts": 0,
+    "non2xx": 209,
+    "resets": 0,
+    "statusCodes": {
+      "200": 10651,
+      "500": 209
+    }
+  },
+  "children": [
+    {
+      "index": 0,
+      "exitCode": 0,
+      "stdout": "b-16x25-acct0 c=25 d=60s rps=11.2 total=670 p50=2017 p90=2342 p99=6375 max=7919 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:670]",
+      "summary": {
+        "rps": 11.17,
+        "total": 670,
+        "p50": 2017,
+        "p90": 2342,
+        "p99": 6375,
+        "max": 7919,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 0,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 670
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-16x25--acct00.json"
+      }
+    },
+    {
+      "index": 1,
+      "exitCode": 0,
+      "stdout": "b-16x25-acct1 c=25 d=60s rps=11.3 total=679 p50=2014 p90=2381 p99=6383 max=6621 errors=0 timeouts=0 non2xx=13 resets=0 statuses[200:666 500:13]",
+      "summary": {
+        "rps": 11.32,
+        "total": 679,
+        "p50": 2014,
+        "p90": 2381,
+        "p99": 6383,
+        "max": 6621,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 13,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 666
+          },
+          "500": {
+            "count": 13
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-16x25--acct01.json"
+      }
+    },
+    {
+      "index": 2,
+      "exitCode": 0,
+      "stdout": "b-16x25-acct2 c=25 d=60s rps=11.6 total=694 p50=1998 p90=2296 p99=6179 max=6335 errors=0 timeouts=0 non2xx=11 resets=0 statuses[200:683 500:11]",
+      "summary": {
+        "rps": 11.57,
+        "total": 694,
+        "p50": 1998,
+        "p90": 2296,
+        "p99": 6179,
+        "max": 6335,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 11,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 683
+          },
+          "500": {
+            "count": 11
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-16x25--acct02.json"
+      }
+    },
+    {
+      "index": 3,
+      "exitCode": 0,
+      "stdout": "b-16x25-acct3 c=25 d=60s rps=11.2 total=672 p50=2013 p90=2351 p99=6295 max=6406 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:672]",
+      "summary": {
+        "rps": 11.2,
+        "total": 672,
+        "p50": 2013,
+        "p90": 2351,
+        "p99": 6295,
+        "max": 6406,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 0,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 672
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-16x25--acct03.json"
+      }
+    },
+    {
+      "index": 4,
+      "exitCode": 0,
+      "stdout": "b-16x25-acct4 c=25 d=60s rps=11.3 total=678 p50=2010 p90=2374 p99=6417 max=6762 errors=0 timeouts=0 non2xx=6 resets=0 statuses[200:672 500:6]",
+      "summary": {
+        "rps": 11.3,
+        "total": 678,
+        "p50": 2010,
+        "p90": 2374,
+        "p99": 6417,
+        "max": 6762,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 6,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 672
+          },
+          "500": {
+            "count": 6
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-16x25--acct04.json"
+      }
+    },
+    {
+      "index": 5,
+      "exitCode": 0,
+      "stdout": "b-16x25-acct5 c=25 d=60s rps=11.5 total=689 p50=2002 p90=2305 p99=5665 max=6903 errors=0 timeouts=0 non2xx=20 resets=0 statuses[200:669 500:20]",
+      "summary": {
+        "rps": 11.49,
+        "total": 689,
+        "p50": 2002,
+        "p90": 2305,
+        "p99": 5665,
+        "max": 6903,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 20,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 669
+          },
+          "500": {
+            "count": 20
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-16x25--acct05.json"
+      }
+    },
+    {
+      "index": 6,
+      "exitCode": 0,
+      "stdout": "b-16x25-acct6 c=25 d=60s rps=11.8 total=707 p50=1989 p90=2301 p99=6279 max=6451 errors=0 timeouts=0 non2xx=9 resets=0 statuses[200:698 500:9]",
+      "summary": {
+        "rps": 11.79,
+        "total": 707,
+        "p50": 1989,
+        "p90": 2301,
+        "p99": 6279,
+        "max": 6451,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 9,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 698
+          },
+          "500": {
+            "count": 9
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-16x25--acct06.json"
+      }
+    },
+    {
+      "index": 7,
+      "exitCode": 0,
+      "stdout": "b-16x25-acct7 c=25 d=60s rps=11.1 total=663 p50=2014 p90=2313 p99=8777 max=8982 errors=0 timeouts=0 non2xx=2 resets=0 statuses[200:661 500:2]",
+      "summary": {
+        "rps": 11.05,
+        "total": 663,
+        "p50": 2014,
+        "p90": 2313,
+        "p99": 8777,
+        "max": 8982,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 2,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 661
+          },
+          "500": {
+            "count": 2
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-16x25--acct07.json"
+      }
+    },
+    {
+      "index": 8,
+      "exitCode": 0,
+      "stdout": "b-16x25-acct8 c=25 d=60s rps=11.8 total=709 p50=1993 p90=2295 p99=6268 max=6357 errors=0 timeouts=0 non2xx=11 resets=0 statuses[200:698 500:11]",
+      "summary": {
+        "rps": 11.82,
+        "total": 709,
+        "p50": 1993,
+        "p90": 2295,
+        "p99": 6268,
+        "max": 6357,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 11,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 698
+          },
+          "500": {
+            "count": 11
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-16x25--acct08.json"
+      }
+    },
+    {
+      "index": 9,
+      "exitCode": 0,
+      "stdout": "b-16x25-acct9 c=25 d=60s rps=11.3 total=676 p50=2016 p90=2355 p99=6429 max=6674 errors=0 timeouts=0 non2xx=4 resets=0 statuses[200:672 500:4]",
+      "summary": {
+        "rps": 11.27,
+        "total": 676,
+        "p50": 2016,
+        "p90": 2355,
+        "p99": 6429,
+        "max": 6674,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 4,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 672
+          },
+          "500": {
+            "count": 4
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-16x25--acct09.json"
+      }
+    },
+    {
+      "index": 10,
+      "exitCode": 0,
+      "stdout": "b-16x25-acct10 c=25 d=60s rps=11.4 total=683 p50=2008 p90=2324 p99=5024 max=6540 errors=0 timeouts=0 non2xx=20 resets=0 statuses[200:663 500:20]",
+      "summary": {
+        "rps": 11.39,
+        "total": 683,
+        "p50": 2008,
+        "p90": 2324,
+        "p99": 5024,
+        "max": 6540,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 20,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 663
+          },
+          "500": {
+            "count": 20
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-16x25--acct10.json"
+      }
+    },
+    {
+      "index": 11,
+      "exitCode": 0,
+      "stdout": "b-16x25-acct11 c=25 d=60s rps=11.1 total=665 p50=2009 p90=2379 p99=6847 max=6860 errors=0 timeouts=0 non2xx=25 resets=0 statuses[200:640 500:25]",
+      "summary": {
+        "rps": 11.09,
+        "total": 665,
+        "p50": 2009,
+        "p90": 2379,
+        "p99": 6847,
+        "max": 6860,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 25,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 640
+          },
+          "500": {
+            "count": 25
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-16x25--acct11.json"
+      }
+    },
+    {
+      "index": 12,
+      "exitCode": 0,
+      "stdout": "b-16x25-acct12 c=25 d=60s rps=11.0 total=660 p50=1997 p90=2348 p99=7188 max=8057 errors=0 timeouts=0 non2xx=21 resets=0 statuses[200:639 500:21]",
+      "summary": {
+        "rps": 11,
+        "total": 660,
+        "p50": 1997,
+        "p90": 2348,
+        "p99": 7188,
+        "max": 8057,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 21,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 639
+          },
+          "500": {
+            "count": 21
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-16x25--acct12.json"
+      }
+    },
+    {
+      "index": 13,
+      "exitCode": 0,
+      "stdout": "b-16x25-acct13 c=25 d=60s rps=11.1 total=666 p50=2011 p90=2379 p99=6802 max=7096 errors=0 timeouts=0 non2xx=24 resets=0 statuses[200:642 500:24]",
+      "summary": {
+        "rps": 11.1,
+        "total": 666,
+        "p50": 2011,
+        "p90": 2379,
+        "p99": 6802,
+        "max": 7096,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 24,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 642
+          },
+          "500": {
+            "count": 24
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-16x25--acct13.json"
+      }
+    },
+    {
+      "index": 14,
+      "exitCode": 0,
+      "stdout": "b-16x25-acct14 c=25 d=60s rps=11.0 total=662 p50=2011 p90=2336 p99=6905 max=6916 errors=0 timeouts=0 non2xx=25 resets=0 statuses[200:637 500:25]",
+      "summary": {
+        "rps": 11.04,
+        "total": 662,
+        "p50": 2011,
+        "p90": 2336,
+        "p99": 6905,
+        "max": 6916,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 25,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 637
+          },
+          "500": {
+            "count": 25
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-16x25--acct14.json"
+      }
+    },
+    {
+      "index": 15,
+      "exitCode": 0,
+      "stdout": "b-16x25-acct15 c=25 d=60s rps=11.4 total=687 p50=1994 p90=2303 p99=6139 max=7014 errors=0 timeouts=0 non2xx=18 resets=0 statuses[200:669 500:18]",
+      "summary": {
+        "rps": 11.45,
+        "total": 687,
+        "p50": 1994,
+        "p90": 2303,
+        "p99": 6139,
+        "max": 7014,
+        "errors": 0,
+        "timeouts": 0,
+        "non2xx": 18,
+        "resets": 0,
+        "statusCodeStats": {
+          "200": {
+            "count": 669
+          },
+          "500": {
+            "count": 18
+          }
+        },
+        "file": "/home/ahmad/projects/usage-metering-quota-service/docs/performance/results/extreme-capacity-2026-10-19/raw/b-16x25--acct15.json"
+      }
+    }
+  ]
+}

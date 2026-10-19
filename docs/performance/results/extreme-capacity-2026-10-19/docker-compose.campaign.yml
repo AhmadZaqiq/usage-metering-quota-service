@@ -1,0 +1,104 @@
+# Campaign-only compose file (untracked, disposable).
+#
+# Runs the SAME image build as docker-compose.yml but in a fully isolated
+# Compose project:
+#   - project name um-extreme -> volumes um-extreme_*
+#   - dedicated container names um-extreme-*
+#   - host ports 3100 (app) / 5440 (postgres) / 6380 (redis)
+#   - restart: "no" so an application crash under load stays observable
+#   - json-file log rotation so long load stages cannot fill the disk
+#
+# The existing development stack (usage-metering-*) is never touched.
+name: um-extreme
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: um-extreme-db
+    restart: "no"
+    environment:
+      POSTGRES_DB: usage_metering
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app_secret
+    volumes:
+      - pgdata_campaign:/var/lib/postgresql/data
+    ports:
+      - "5440:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d usage_metering"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: um-extreme-redis
+    restart: "no"
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  app:
+    build:
+      context: ../../../..
+      dockerfile: Dockerfile
+    container_name: um-extreme-app
+    restart: "no"
+    environment:
+      DATABASE_URL: postgresql://app:app_secret@postgres:5432/usage_metering
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: development
+      PORT: "3000"
+      LOG_LEVEL: debug
+      MAX_UNITS_PER_REQUEST: "10000"
+      RATE_LIMIT_WINDOW_MS: "60000"
+      # Capacity stages run with the limiter raised so rejections do not mask
+      # capacity; the default-budget test starts the stack without this set.
+      RATE_LIMIT_MAX: "${RATE_LIMIT_MAX:-10000000}"
+      BOOTSTRAP_ACCOUNT_NAME: "extreme-bootstrap"
+      BOOTSTRAP_API_KEY_NAME: "extreme-default-key"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3100:3000"
+    volumes:
+      - bootstrap-secrets-campaign:/run/secrets
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  client:
+    build:
+      context: ../../../..
+      dockerfile: Dockerfile
+    container_name: um-extreme-client
+    restart: "no"
+    environment:
+      NODE_ENV: development
+    depends_on:
+      app:
+        condition: service_healthy
+    command: ["node", "dist/scripts/client.js", "-u", "http://app:3000"]
+    volumes:
+      - bootstrap-secrets-campaign:/run/secrets
+
+volumes:
+  pgdata_campaign:
+  bootstrap-secrets-campaign:

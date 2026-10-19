@@ -1,0 +1,679 @@
+{
+  "campaign": {
+    "name": "extreme-capacity-2026-10-19",
+    "service": "usage-metering-quota-service",
+    "type": "progressive stress, correctness-under-concurrency, and soak",
+    "startedAt": "2026-10-18T21:59:52Z",
+    "finishedAt": "2026-10-18T23:29:11Z",
+    "isolation": {
+      "composeProject": "um-extreme",
+      "containers": [
+        "um-extreme-app",
+        "um-extreme-db",
+        "um-extreme-redis",
+        "um-extreme-client"
+      ],
+      "hostPorts": {
+        "app": 3100,
+        "postgres": 5440,
+        "redis": 6380
+      },
+      "volumesRetainedAfterTeardown": [
+        "um-extreme_pgdata_campaign",
+        "um-extreme_bootstrap-secrets-campaign"
+      ],
+      "devStackTouched": false
+    }
+  },
+  "environment": {
+    "host": "WSL2 kernel 6.18.33.2-microsoft-standard, 12 vCPU, 8.3 GiB RAM",
+    "hostNode": "v22.15.0",
+    "autocannon": "7.15.0",
+    "docker": "29.8.1",
+    "dockerCompose": "v5.5.1",
+    "appNode": "v22.23.3",
+    "postgres": "16.15",
+    "redis": "7.4.11",
+    "postgresConfig": {
+      "maxConnections": 100,
+      "sharedBuffers": "16384 x 8kB (128 MiB)",
+      "synchronousCommit": "on"
+    },
+    "appDbPool": {
+      "max": 20,
+      "connectionTimeoutMillis": 5000,
+      "statementTimeoutMillis": 15000
+    }
+  },
+  "baseline": {
+    "testSuite": {
+      "files": 21,
+      "tests": 204,
+      "result": "passed",
+      "durationSeconds": 126.3,
+      "artifact": "raw/baseline-test-suite.log"
+    },
+    "cliDemo": {
+      "checks": 59,
+      "passed": 59,
+      "artifact": "raw/cli-demo.log"
+    },
+    "rateLimitCharacterization": {
+      "rateLimitMax": 100,
+      "windowSeconds": 60,
+      "connections": 50,
+      "durationSeconds": 5,
+      "http200": 100,
+      "http429": 9851,
+      "otherErrors": 0,
+      "artifact": "raw/rate-limit-default.json"
+    },
+    "campaignRateLimitOverride": 10000000
+  },
+  "scenarioA_hotAccountLadder": {
+    "description": "Single hot account, unique idempotency keys, units=1, progressive open connections.",
+    "accountAllowance": "1000000000000",
+    "stages": [
+      {
+        "stage": "a-c1",
+        "connections": 1,
+        "durationSeconds": 30,
+        "requests": 2741,
+        "rps": 91.4,
+        "p50Ms": 10,
+        "p90Ms": 12,
+        "p99Ms": 20,
+        "maxMs": 100,
+        "http200": 2741,
+        "http500": 0,
+        "tailCommitted": 1
+      },
+      {
+        "stage": "a-c5",
+        "connections": 5,
+        "durationSeconds": 60,
+        "requests": 8528,
+        "rps": 142.1,
+        "p50Ms": 15,
+        "p90Ms": 80,
+        "p99Ms": 173,
+        "maxMs": 377,
+        "http200": 8528,
+        "http500": 0,
+        "tailCommitted": 5
+      },
+      {
+        "stage": "a-c10",
+        "connections": 10,
+        "durationSeconds": 60,
+        "requests": 8369,
+        "rps": 139.5,
+        "p50Ms": 15,
+        "p90Ms": 212,
+        "p99Ms": 507,
+        "maxMs": 977,
+        "http200": 8369,
+        "http500": 0,
+        "tailCommitted": 10
+      },
+      {
+        "stage": "a-c25",
+        "connections": 25,
+        "durationSeconds": 60,
+        "requests": 7424,
+        "rps": 123.7,
+        "p50Ms": 59,
+        "p90Ms": 539,
+        "p99Ms": 1214,
+        "maxMs": 2340,
+        "http200": 7424,
+        "http500": 0,
+        "tailCommitted": 25
+      },
+      {
+        "stage": "a-c50",
+        "connections": 50,
+        "durationSeconds": 60,
+        "requests": 7428,
+        "rps": 123.8,
+        "p50Ms": 268,
+        "p90Ms": 751,
+        "p99Ms": 1388,
+        "maxMs": 3110,
+        "http200": 7428,
+        "http500": 0,
+        "tailCommitted": 50
+      },
+      {
+        "stage": "a-c100",
+        "connections": 100,
+        "durationSeconds": 60,
+        "requests": 7508,
+        "rps": 125.1,
+        "p50Ms": 672,
+        "p90Ms": 1152,
+        "p99Ms": 1827,
+        "maxMs": 3350,
+        "http200": 7508,
+        "http500": 0,
+        "tailCommitted": 100
+      },
+      {
+        "stage": "a-c200",
+        "connections": 200,
+        "durationSeconds": 60,
+        "requests": 7551,
+        "rps": 125.8,
+        "p50Ms": 1462,
+        "p90Ms": 1925,
+        "p99Ms": 2591,
+        "maxMs": 3877,
+        "http200": 7551,
+        "http500": 0,
+        "tailCommitted": 200
+      },
+      {
+        "stage": "a-c400",
+        "connections": 400,
+        "durationSeconds": 60,
+        "requests": 7109,
+        "rps": 118.5,
+        "p50Ms": 3204,
+        "p90Ms": 3839,
+        "p99Ms": 4510,
+        "maxMs": 6280,
+        "http200": 7109,
+        "http500": 0,
+        "tailCommitted": 400
+      },
+      {
+        "stage": "a-c500-sustained",
+        "connections": 500,
+        "durationSeconds": 120,
+        "requests": 14696,
+        "rps": 122.5,
+        "p50Ms": 3966,
+        "p90Ms": 4424,
+        "p99Ms": 5125,
+        "maxMs": 6932,
+        "http200": 14696,
+        "http500": 0,
+        "tailCommitted": 500
+      },
+      {
+        "stage": "a-c500-repeat",
+        "connections": 500,
+        "durationSeconds": 60,
+        "requests": 7496,
+        "rps": 124.9,
+        "p50Ms": 3880,
+        "p90Ms": 4292,
+        "p99Ms": 4977,
+        "maxMs": 6319,
+        "http200": 7496,
+        "http500": 0,
+        "tailCommitted": 500
+      },
+      {
+        "stage": "a-c600",
+        "connections": 600,
+        "durationSeconds": 60,
+        "requests": 7550,
+        "rps": 125.8,
+        "p50Ms": 4611,
+        "p90Ms": 5077,
+        "p99Ms": 5722,
+        "maxMs": 7195,
+        "http200": 7550,
+        "http500": 0,
+        "tailCommitted": 600
+      },
+      {
+        "stage": "a-c600-repeat",
+        "connections": 600,
+        "durationSeconds": 60,
+        "requests": 7271,
+        "rps": 121.2,
+        "p50Ms": 4755,
+        "p90Ms": 5263,
+        "p99Ms": 6027,
+        "maxMs": 7182,
+        "http200": 7271,
+        "http500": 0,
+        "tailCommitted": 600
+      },
+      {
+        "stage": "a-c650",
+        "connections": 650,
+        "durationSeconds": 60,
+        "requests": 7294,
+        "rps": 121.6,
+        "p50Ms": 5197,
+        "p90Ms": 5653,
+        "p99Ms": 6333,
+        "maxMs": 8229,
+        "http200": 7294,
+        "http500": 0,
+        "tailCommitted": 650
+      },
+      {
+        "stage": "a-c650-repeat",
+        "connections": 650,
+        "durationSeconds": 60,
+        "requests": 7451,
+        "rps": 124.2,
+        "p50Ms": 5107,
+        "p90Ms": 5547,
+        "p99Ms": 6178,
+        "maxMs": 7946,
+        "http200": 7451,
+        "http500": 0,
+        "tailCommitted": 650
+      },
+      {
+        "stage": "a-c675",
+        "connections": 675,
+        "durationSeconds": 60,
+        "requests": 7420,
+        "rps": 123.7,
+        "p50Ms": 5302,
+        "p90Ms": 5753,
+        "p99Ms": 6481,
+        "maxMs": 7752,
+        "http200": 7395,
+        "http500": 25,
+        "tailCommitted": 661
+      },
+      {
+        "stage": "a-c700",
+        "connections": 700,
+        "durationSeconds": 60,
+        "requests": 7526,
+        "rps": 125.4,
+        "p50Ms": 5427,
+        "p90Ms": 5874,
+        "p99Ms": 6506,
+        "maxMs": 8187,
+        "http200": 7453,
+        "http500": 73,
+        "tailCommitted": 700
+      },
+      {
+        "stage": "a-c700-repeat",
+        "connections": 700,
+        "durationSeconds": 60,
+        "requests": 7547,
+        "rps": 125.8,
+        "p50Ms": 5383,
+        "p90Ms": 5825,
+        "p99Ms": 6468,
+        "maxMs": 7435,
+        "http200": 7238,
+        "http500": 309,
+        "tailCommitted": 700
+      },
+      {
+        "stage": "a-c800",
+        "connections": 800,
+        "durationSeconds": 60,
+        "requests": 8447,
+        "rps": 140.8,
+        "p50Ms": 5426,
+        "p90Ms": 5917,
+        "p99Ms": 6650,
+        "maxMs": 8783,
+        "http200": 6949,
+        "http500": 1498,
+        "tailCommitted": 666
+      }
+    ],
+    "findings": {
+      "preRestartCleanUpToConnections": 650,
+      "preRestartFirstFailureConnections": 675,
+      "preRestartThroughputPlateauRps": "121-126",
+      "failure": "HTTP 500, pg-pool 'timeout exceeded when trying to connect', 5s acquire timeout",
+      "poolMath": "failure when (connections - 20) / serviceRate > 5s; at ~125 rps this is ~645 connections"
+    }
+  },
+  "scenarioA_multiUserSameAccount": {
+    "description": "One hot account, distinct user per child process, account+user counters both enforced.",
+    "stages": [
+      {
+        "stage": "a-multi8x25",
+        "connectionsTotal": 200,
+        "connectionsPerUser": 25,
+        "durationSeconds": 60,
+        "requests": 5465,
+        "aggregateRps": 91.08,
+        "perChildRpsMin": 11.2,
+        "perChildRpsMax": 11.6,
+        "p50MedianMs": 1915,
+        "p99MedianMs": 5008,
+        "http500": 0,
+        "tailCommitted": 200
+      },
+      {
+        "stage": "a-multi8x50",
+        "connectionsTotal": 400,
+        "connectionsPerUser": 50,
+        "durationSeconds": 60,
+        "requests": 5758,
+        "aggregateRps": 95.97,
+        "perChildRpsMin": 11.65,
+        "perChildRpsMax": 12.3,
+        "p50MedianMs": 3949,
+        "p99MedianMs": 5396,
+        "http500": 0,
+        "tailCommitted": 400
+      }
+    ],
+    "findings": "User-scoped traffic on the same account is slower than account-level traffic (91-96 rps vs ~125 rps) because both the account and user counter rows are locked in the same serialized transaction."
+  },
+  "scenarioB_multiAccount": {
+    "description": "8 or 16 distinct accounts, separate load-generator process per account.",
+    "stages": [
+      {
+        "stage": "b-8x25",
+        "accounts": 8,
+        "connectionsTotal": 200,
+        "durationSeconds": 60,
+        "requests": 10845,
+        "rps": 180.75,
+        "perAccountRpsMin": 22.3,
+        "perAccountRpsMax": 23,
+        "p50MedianMs": 1060,
+        "p99MedianMs": 2285,
+        "http200": 10845,
+        "http500": 0,
+        "tailCommitted": 200
+      },
+      {
+        "stage": "b-8x50",
+        "accounts": 8,
+        "connectionsTotal": 400,
+        "durationSeconds": 60,
+        "requests": 11214,
+        "rps": 186.9,
+        "perAccountRpsMin": 22.8,
+        "perAccountRpsMax": 24,
+        "p50MedianMs": 2091,
+        "p99MedianMs": 2637,
+        "http200": 11214,
+        "http500": 0,
+        "tailCommitted": 400
+      },
+      {
+        "stage": "b-16x25",
+        "accounts": 16,
+        "connectionsTotal": 400,
+        "durationSeconds": 60,
+        "requests": 10860,
+        "rps": 181,
+        "perAccountRpsMin": 11,
+        "perAccountRpsMax": 11.8,
+        "p50MedianMs": 2010,
+        "p99MedianMs": 6383,
+        "http200": 10651,
+        "http500": 209,
+        "tailCommitted": 400,
+        "note": "all 209 HTTP 500s occurred in the 22:55:02-22:55:03 startup window; steady state was clean"
+      },
+      {
+        "stage": "b-16x50",
+        "accounts": 16,
+        "connectionsTotal": 800,
+        "durationSeconds": 60,
+        "requests": 11456,
+        "rps": 190.93,
+        "perAccountRpsMin": 11.6,
+        "perAccountRpsMax": 12.8,
+        "p50MedianMs": 3971,
+        "p99MedianMs": 5248,
+        "http200": 11456,
+        "http500": 0,
+        "tailCommitted": 800
+      }
+    ],
+    "steadyStateResources": {
+      "appCpuPercentApprox": "107-116 (about 1.1 of 12 cores)",
+      "postgresCpuPercentApprox": "80-94",
+      "redisCpuPercentApprox": 5,
+      "postgresActiveBackends": "6-14",
+      "lockWaiters": "3-12",
+      "hostLoad1": "3.7-4.4 of 12",
+      "generatorCpuPercent": "33-51"
+    },
+    "findings": "~190 rps plateau at 8 and 16 accounts. App is the CPU ceiling for multi-account traffic; the pool is not the limiting resource. Postgres commits ~2.09 transactions per HTTP request because API-key verification performs a separate autocommit query."
+  },
+  "scenarioC_correctness": {
+    "idempotencySameKeyStorm": {
+      "concurrentRequests": 200,
+      "http200": 200,
+      "decision": "accepted",
+      "distinctAccountRemainingValues": 1,
+      "committedRowsForKey": 1,
+      "unitsConsumed": 1,
+      "counterBefore": 0,
+      "counterAfter": 1,
+      "artifact": "raw/c1-same-key-storm.json"
+    },
+    "idempotencyConflictStorm": {
+      "concurrentRequests": 300,
+      "payloads": "alternating units=1 and units=2",
+      "http200": 150,
+      "http409": 150,
+      "errorCode": "CONFLICT",
+      "committedRowsForKey": 1,
+      "unitsConsumed": 1,
+      "counterBefore": 1,
+      "counterAfter": 2,
+      "artifact": "raw/c2-conflict-storm.json"
+    },
+    "rejectedDecisionReplay": {
+      "identicalReplay": "200 rejected account_quota_exceeded, accountRemaining 0",
+      "conflictingReplay": "409 CONFLICT",
+      "committedRowsForKey": 1
+    },
+    "accountBoundaryRace": {
+      "allowance": 50,
+      "concurrentRequests": 200,
+      "units": 1,
+      "http200": 200,
+      "accepted": 50,
+      "rejected": 150,
+      "rejectionReason": "account_quota_exceeded",
+      "accountCounterDelta": 50,
+      "committedAcceptedRows": 50,
+      "committedRejectedRows": 150,
+      "minAccountRemainingReported": 0,
+      "postExhaustionRequest": "rejected account_quota_exceeded, accountRemaining 0",
+      "artifact": "raw/c4-account-boundary.json"
+    },
+    "userBoundaryRace": {
+      "userAllowance": 10,
+      "accountAllowance": "1000000",
+      "concurrentRequests": 100,
+      "units": 1,
+      "http200": 100,
+      "accepted": 10,
+      "rejected": 90,
+      "rejectionReason": "user_quota_exceeded",
+      "userCounterDelta": 10,
+      "accountCounterDelta": 10,
+      "committedAcceptedRows": 10,
+      "committedRejectedRows": 90,
+      "minUserRemainingReported": 0,
+      "postExhaustionUserRequest": "rejected user_quota_exceeded, userRemaining 0",
+      "postExhaustionAccountLevelRequest": "accepted, accountRemaining 999989",
+      "artifact": "raw/c5-user-boundary.json"
+    },
+    "counterConsistency": {
+      "perUserCounterEqualsCommittedRows": true,
+      "accountCounterEqualsCommittedRows": true,
+      "artifact": "raw/c3-accounting-consistency.json"
+    }
+  },
+  "scenarioD_soakAndRecovery": {
+    "soak": {
+      "stage": "d-soak-550",
+      "connections": 550,
+      "durationSeconds": 600,
+      "responses": 58991,
+      "rps": 98.3,
+      "http200": 58398,
+      "http500": 593,
+      "errorRatePercent": 1,
+      "p50Ms": 5510,
+      "p90Ms": 6101,
+      "p99Ms": 7071,
+      "maxMs": 9884,
+      "committedAcceptedRows": 58948,
+      "tailCommitted": 550,
+      "steadyCommittedPerMinute": "5854-6213",
+      "failureType": "pg-pool acquire timeout (5s), no deadlocks, no statement timeouts",
+      "failureTiming": "bursty; largest burst 554 at 23:11 during a checkpoint window",
+      "artifact": "raw/d-soak-550.json"
+    },
+    "recovery": {
+      "stage": "d-recovery-c10",
+      "connections": 10,
+      "durationSeconds": 30,
+      "rps": 99.7,
+      "p50Ms": 23,
+      "p90Ms": 277,
+      "p99Ms": 687,
+      "http500": 0,
+      "artifact": "raw/d-recovery-c10.json"
+    },
+    "postSoakBoundary": {
+      "stage": "d-postsoak-c500",
+      "connections": 500,
+      "durationSeconds": 60,
+      "rps": 97.2,
+      "p50Ms": 4940,
+      "p90Ms": 5522,
+      "p99Ms": 6391,
+      "http500": 0,
+      "artifact": "raw/d-postsoak-c500.json"
+    },
+    "health": {
+      "live": "200 {status: ok}",
+      "ready": "200 {status: ok, database: healthy, latencyMs: 0}"
+    }
+  },
+  "verification": {
+    "invariants": {
+      "result": "passed",
+      "acceptedRows": 291383,
+      "rejectedRows": 248,
+      "acceptedUnits": "291415",
+      "duplicateIdempotencyKeys": 0,
+      "negativeRemainings": 0,
+      "periodStartMismatches": 0,
+      "artifact": "snapshots/invariants-final.log"
+    },
+    "finalDbState": {
+      "accounts": 21,
+      "usageRequests": 291631,
+      "accepted": 291383,
+      "rejected": 248,
+      "artifact": "snapshots/state-final.json"
+    },
+    "devDatabaseUntouched": {
+      "unchanged": true,
+      "accounts": 2,
+      "users": 54,
+      "plans": 16,
+      "apiKeys": 9,
+      "usageRequests": 28810,
+      "accepted": 28772,
+      "rejected": 38,
+      "acceptedUnits": "34046",
+      "accountCounters": {
+        "1": "7727",
+        "2": "26319"
+      },
+      "userCounters": 50,
+      "artifacts": [
+        "snapshots/dev-db-before.json",
+        "snapshots/dev-db-after.json"
+      ]
+    },
+    "errorAudit": {
+      "stageReportedHttp500Total": 2707,
+      "retainedLogPoolTimeoutMessages": 1067,
+      "retainedLogIdempotencyConflicts": 151,
+      "retainedLogNotFound": 2,
+      "retainedLogValidationErrors": 1,
+      "deadlocks": 0,
+      "statementTimeouts": 0,
+      "serializationFailures": 0,
+      "duplicateKeys": 0,
+      "connectionResets": 0,
+      "logCoverageNote": "Container log rotation discarded older entries; stage JSON files are authoritative for HTTP 500 counts. Retained logs cover the late ladder, b-16x25, and soak windows.",
+      "artifact": "snapshots/app-error-tally.txt"
+    }
+  },
+  "incident": {
+    "type": "environment restart",
+    "time": "2026-10-18T22:48Z",
+    "description": "The WSL2 VM restarted during the campaign. All containers exited (255). The isolated stack stayed down because restart is disabled by design; the dev stack restarted automatically.",
+    "recovery": "Isolated stack restarted, PostgreSQL crash recovery completed, accounting invariants passed, aborted b-8x25 rerun performed.",
+    "correctnessImpact": "none observed",
+    "performanceImpact": {
+      "preRestartHotAccountRps": "121-126",
+      "preRestartCleanConnections": 650,
+      "postRestartHotAccountRps": "97-100",
+      "postRestartCleanConnections": 500,
+      "note": "The cause of the ~20% hot-account throughput shift was not isolated; it is treated as environment variance, most plausibly fsync/disk behavior of the WSL2 virtual disk after restart. Multi-account throughput remained ~180-191 rps."
+    }
+  },
+  "tailCommitPhenomenon": {
+    "observed": "For every stage, the number of committed accepted rows exceeded the HTTP 2xx count by exactly the number of client connections (single-request pipelining=1), with minor deviations for failing stages.",
+    "cause": "autocannon stops after the duration while the server still has one queued request per connection; those requests commit after the client has already closed or stopped accounting for them.",
+    "consequence": "Quota is consumed by requests whose responses the client did not observe. Retries with the same idempotency key are required and are safe. DB snapshots taken immediately at the end of a stage may therefore lag committed rows by up to the connection count."
+  },
+  "bottleneckAnalysis": {
+    "hotAccount": {
+      "primary": "Serialization on the account counter row lock. All 20 pooled Postgres connections were observed waiting on the lock (pg_lock_waiters 19), while app CPU was only ~55-60% and Postgres CPU ~72%.",
+      "secondary": "The row lock is held until COMMIT; with synchronous_commit=on, commits are serialized for the same account, defeating group commit. Service time ~8 ms pre-restart (~125 rps), ~10 ms post-restart (~100 rps).",
+      "failureMode": "Latency grows linearly with concurrency; when queue wait exceeds the 5s pg-pool acquire timeout, requests fail with HTTP 500 without consuming quota."
+    },
+    "multiAccount": {
+      "primary": "Node.js application CPU at ~1.1 cores (~190 rps plateau); Postgres has headroom (active backends 6-14, lock waiters 3-12).",
+      "secondary": "~2.09 Postgres transactions per request because API-key verification runs a separate autocommit query outside the usage transaction."
+    },
+    "capacityGuidance": {
+      "hotAccountSustainedRps": "~100-125 depending on host disk/fsync state",
+      "hotAccountSafeConnections": "~500 post-restart, ~650 pre-restart; beyond this pool-acquire timeouts appear",
+      "multiAccountRps": "~180-191 with 8-16 accounts on this 12-vCPU host",
+      "interactiveLatencyExamples": "c=10 p99 507-687 ms; c=25 p99 1.2 s; c=50 p99 1.4 s; c=200 p99 2.6 s; c=500 p99 ~5-6 s"
+    }
+  },
+  "recommendations": [
+    "Treat the hot-account path as the primary scalability constraint: replace the SELECT/upsert-then-update sequence with a single atomic conditional update (or a single CTE that inserts the usage row and updates both counters) to shorten the lock hold and reduce round trips.",
+    "Eliminate the per-request API-key database query with a short-TTL verified-key cache, or fold verification into the usage transaction; this should roughly halve Postgres transaction load and reduce pool contention.",
+    "Add admission control or a separate overload response for pool exhaustion. Returning 500 for a 5s pool-acquire timeout is misleading; 503/429 with Retry-After and a stable error code would be more operable.",
+    "Do not raise the pool size expecting higher hot-account throughput; more connections only increase lock waiters. Size the pool and acquire timeout against the latency SLO, and load-shed before the timeout.",
+    "Measure p99 and pg_lock_waiters together in production; they are the leading indicators of hot-account saturation.",
+    "For multi-account scale, profile the Node event loop and consider clustering/worker threads or multiple app instances. A single hot account still cannot be scaled by adding app instances because the database row lock serializes it.",
+    "Re-run the soak after the restart anomaly and on the target deployment disk before publishing capacity numbers; fsync behavior materially changes the hot-account ceiling."
+  ],
+  "limitations": [
+    "Single WSL2 host; results are not a cloud production capacity claim.",
+    "The VM restarted mid-campaign; pre/post-restart single-account capacity differs by ~20%. The cause was not proven.",
+    "The rate limiter was raised to 10,000,000 for capacity stages; the default 100/60s limit was verified separately.",
+    "autocannon is a closed-loop generator and reports p97_5 rather than p95; latencies include client-side queueing.",
+    "One request per connection (pipelining=1); no HTTP keep-alive pipelining or mixed read/write workload was tested.",
+    "No month-rollover stress, no failover, no disk-full or Redis-outage injection during the campaign.",
+    "The soak lasted 10 minutes; longer soaks may reveal slow leaks or autovacuum/checkpoint interactions.",
+    "Raw artifacts contain ephemeral isolated test API keys and must not be committed to a public repository."
+  ],
+  "artifacts": {
+    "report": "REPORT.md",
+    "summary": "summary.json",
+    "raw": "raw/",
+    "snapshots": "snapshots/",
+    "scripts": "scripts/"
+  }
+}

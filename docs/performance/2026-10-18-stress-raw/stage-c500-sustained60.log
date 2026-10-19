@@ -1,0 +1,66 @@
+=== Usage Metering Load Test ===
+Target: http://localhost:3000
+Duration: 60s
+Connections: 500
+Pipelining: 1
+================================
+
+Waiting for server to be ready...
+Server is ready.
+
+Starting load test...
+
+
+========== LOAD TEST RESULTS ==========
+Target URL: http://localhost:3000
+Duration: 60s
+Connections: 500
+Pipelining: 1
+Units per request: 1
+--------------------------------------
+
+--- Throughput ---
+Requests/second: 113.55 (mean)
+  Total requests: 6813
+
+--- Latency (ms) ---
+  p50: 4270.00 ms
+  p90: 4866.00 ms
+  p99: 5836.00 ms
+  max: 7205.00 ms
+  mean: 4254.63 ms
+  stddev: 625.21 ms
+
+--- Throughput over time ---
+  Requests sent: 7313
+  Data throughput: 0.059 MB/s (mean)
+
+--- Errors ---
+  Errors: 0
+  Timeouts: 0
+  Non-2xx: 0
+  Mismatches: 0
+
+--- Latency Distribution ---
+  p0_001: 548.00 ms
+  p0_01: 548.00 ms
+  p0_1: 638.00 ms
+  p1: 1209.00 ms
+  p2_5: 3028.00 ms
+  p10: 3824.00 ms
+  p25: 3949.00 ms
+  p50: 4270.00 ms
+  p75: 4519.00 ms
+  p90: 4866.00 ms
+  p97_5: 5470.00 ms
+  p99: 5836.00 ms
+  p99_9: 6479.00 ms
+  p99_99: 7205.00 ms
+  p99_999: 7205.00 ms
+
+--- Post-run accounting check ---
+  Verify counters equal accepted totals and invariants hold:
+    docker compose run --rm app node dist/scripts/verify-invariants.js
+
+========================================
+

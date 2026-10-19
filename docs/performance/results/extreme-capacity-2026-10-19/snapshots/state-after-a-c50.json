@@ -1,0 +1,61 @@
+{
+  "captured_at": "2026-10-18T22:13:48.335718+00:00",
+  "accounts": 21,
+  "users": 30,
+  "plans": 47,
+  "api_keys": 22,
+  "usage_requests_total": 36373,
+  "usage_requests_accepted": 36370,
+  "usage_requests_rejected": 3,
+  "accepted_units_sum": "36386",
+  "rejected_units_sum": "13",
+  "rejected_with_units_gt_zero": 3,
+  "account_counters": [
+    {
+      "account_id": "1",
+      "period_start": "2026-10-01",
+      "counter": "22",
+      "updated_at": "2026-10-18T22:02:42.035947+00:00"
+    },
+    {
+      "account_id": "2",
+      "period_start": "2026-10-01",
+      "counter": "36364",
+      "updated_at": "2026-10-18T22:13:48.329916+00:00"
+    }
+  ],
+  "user_counters": [
+    {
+      "account_id": "1",
+      "user_id": "1",
+      "period_start": "2026-10-01",
+      "counter": "6"
+    },
+    {
+      "account_id": "1",
+      "user_id": "2",
+      "period_start": "2026-10-01",
+      "counter": "5"
+    },
+    {
+      "account_id": "1",
+      "user_id": "3",
+      "period_start": "2026-10-01",
+      "counter": "10"
+    }
+  ],
+  "negative_remainings": 0,
+  "duplicate_idempotency_keys": 0,
+  "period_start_mismatches_requests": 0,
+  "rejected_rows_in_counters_check": 0,
+  "pg_stat_database": {
+    "xact_commit": "74226",
+    "xact_rollback": "1",
+    "deadlocks": "0",
+    "conflicts": "0",
+    "blks_read": "467",
+    "blks_hit": "3962653",
+    "temp_files": "0",
+    "temp_bytes": "0"
+  }
+}

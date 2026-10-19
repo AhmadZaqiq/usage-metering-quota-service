@@ -1,0 +1,82 @@
+account extreme-hot: reuse id=2
+plan extreme-hot account plan: reuse id=8
+plan extreme-hot user plan: reuse id=9
+account extreme-hot: ready (id=2, users=8, key=b41c520acec268d6)
+account extreme-b00: reuse id=3
+plan extreme-b00 account plan: created id=10
+plan extreme-b00 user plan: created id=11
+account extreme-b00: ready (id=3, users=1, key=5fcdaddad7bdebb6)
+account extreme-b01: created id=4
+plan extreme-b01 account plan: created id=12
+plan extreme-b01 user plan: created id=13
+account extreme-b01: ready (id=4, users=1, key=80757b0cd08fd9c6)
+account extreme-b02: created id=5
+plan extreme-b02 account plan: created id=14
+plan extreme-b02 user plan: created id=15
+account extreme-b02: ready (id=5, users=1, key=4c4927767a8823f9)
+account extreme-b03: created id=6
+plan extreme-b03 account plan: created id=16
+plan extreme-b03 user plan: created id=17
+account extreme-b03: ready (id=6, users=1, key=14c0d0033a9b7cca)
+account extreme-b04: created id=7
+plan extreme-b04 account plan: created id=18
+plan extreme-b04 user plan: created id=19
+account extreme-b04: ready (id=7, users=1, key=7de8f7c39d436664)
+account extreme-b05: created id=8
+plan extreme-b05 account plan: created id=20
+plan extreme-b05 user plan: created id=21
+account extreme-b05: ready (id=8, users=1, key=075229d2d06e38dc)
+account extreme-b06: created id=9
+plan extreme-b06 account plan: created id=22
+plan extreme-b06 user plan: created id=23
+account extreme-b06: ready (id=9, users=1, key=13823a568bf2ba35)
+account extreme-b07: created id=10
+plan extreme-b07 account plan: created id=24
+plan extreme-b07 user plan: created id=25
+account extreme-b07: ready (id=10, users=1, key=33cbe070d6cde85a)
+account extreme-b08: created id=11
+plan extreme-b08 account plan: created id=26
+plan extreme-b08 user plan: created id=27
+account extreme-b08: ready (id=11, users=1, key=0caa7072b434c3cd)
+account extreme-b09: created id=12
+plan extreme-b09 account plan: created id=28
+plan extreme-b09 user plan: created id=29
+account extreme-b09: ready (id=12, users=1, key=54b1787b64d74c3b)
+account extreme-b10: created id=13
+plan extreme-b10 account plan: created id=30
+plan extreme-b10 user plan: created id=31
+account extreme-b10: ready (id=13, users=1, key=bd34b321ddf11665)
+account extreme-b11: created id=14
+plan extreme-b11 account plan: created id=32
+plan extreme-b11 user plan: created id=33
+account extreme-b11: ready (id=14, users=1, key=f966e3069d98bede)
+account extreme-b12: created id=15
+plan extreme-b12 account plan: created id=34
+plan extreme-b12 user plan: created id=35
+account extreme-b12: ready (id=15, users=1, key=866e173feb8ba979)
+account extreme-b13: created id=16
+plan extreme-b13 account plan: created id=36
+plan extreme-b13 user plan: created id=37
+account extreme-b13: ready (id=16, users=1, key=6b619d3c966ea007)
+account extreme-b14: created id=17
+plan extreme-b14 account plan: created id=38
+plan extreme-b14 user plan: created id=39
+account extreme-b14: ready (id=17, users=1, key=dacc022f6a2becc5)
+account extreme-b15: created id=18
+plan extreme-b15 account plan: created id=40
+plan extreme-b15 user plan: created id=41
+account extreme-b15: ready (id=18, users=1, key=bf7aaefae869b795)
+account extreme-boundary-a: created id=19
+plan extreme-boundary-a account plan: created id=42
+plan extreme-boundary-a user plan: created id=43
+account extreme-boundary-a: ready (id=19, users=1, key=1128365afa8d6b0f)
+account extreme-boundary-u: created id=20
+plan extreme-boundary-u account plan: created id=44
+plan extreme-boundary-u user plan: created id=45
+account extreme-boundary-u: ready (id=20, users=1, key=ceb4566349e41c0d)
+account extreme-idem: created id=21
+plan extreme-idem account plan: created id=46
+plan extreme-idem user plan: created id=47
+account extreme-idem: ready (id=21, users=1, key=a1ceb30b60d942db)
+fixtures written to snapshots/fixtures-output.json (contains ephemeral test secrets)
+=== FIXTURES COMPLETE ===
