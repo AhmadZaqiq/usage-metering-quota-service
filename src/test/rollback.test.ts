@@ -407,8 +407,8 @@ describe("Transaction Rollback Integration Tests", () => {
     });
 
     // Rate-limiter failure policy is covered behaviorally in
-    // src/test/rateLimiter.test.ts: falling back to the in-process store,
-    // still enforcing limits when Redis is down, and failing closed when no
-    // store works (the old "fail open" contract was intentionally removed).
+    // src/test/rateLimiter.test.ts: concurrent requests cannot bypass the
+    // shared in-process limit, and a store failure fails closed (429) rather
+    // than fail open.
   });
 });
