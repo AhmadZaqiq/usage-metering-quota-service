@@ -40,7 +40,7 @@ describe('HTTP input validation', () => {
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
 
-  it('POST /usage still accepts a valid userId (positive control)', async () => {
+  it('POST /usage still accepts a valid userId (positive control, deprecated idempotencyKey alias)', async () => {
     const res = await request(app)
       .post('/usage')
       .set('Authorization', `Bearer ${context.apiKey.key}`)
@@ -48,6 +48,51 @@ describe('HTTP input validation', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.decision).toBe('accepted');
+  });
+
+  it('POST /usage accepts the canonical requestId field and history exposes requestId only', async () => {
+    const res = await request(app)
+      .post('/usage')
+      .set('Authorization', `Bearer ${context.apiKey.key}`)
+      .send({ userId: context.user.clientUserId, units: '1', requestId: 'canonical-key-1' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.decision).toBe('accepted');
+
+    const history = await request(app)
+      .get('/usage')
+      .set('Authorization', `Bearer ${context.apiKey.key}`);
+    expect(history.status).toBe(200);
+    const [item] = history.body.items as Record<string, unknown>[];
+    expect(item.requestId).toBe('canonical-key-1');
+    expect(item).not.toHaveProperty('idempotencyKey');
+  });
+
+  it('POST /usage rejects a body that sends both requestId and idempotencyKey', async () => {
+    const res = await request(app)
+      .post('/usage')
+      .set('Authorization', `Bearer ${context.apiKey.key}`)
+      .send({ units: '1', requestId: 'both-a', idempotencyKey: 'both-b' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+
+    const page = await getUsageHistory(BigInt(context.account.id), 1, 10);
+    expect(page.items).toHaveLength(0);
+  });
+
+  it('POST /usage rejects a body with neither requestId nor idempotencyKey', async () => {
+    const res = await request(app)
+      .post('/usage')
+      .set('Authorization', `Bearer ${context.apiKey.key}`)
+      .send({ units: '1' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(JSON.stringify(res.body.error)).toContain('requestId');
+
+    const page = await getUsageHistory(BigInt(context.account.id), 1, 10);
+    expect(page.items).toHaveLength(0);
   });
 
   it('POST /usage maps malformed JSON to 400 VALIDATION_ERROR, never 500', async () => {

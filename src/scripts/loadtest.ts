@@ -134,7 +134,7 @@ function createLoadTestConfig(args: LoadTestArgs, apiKey: string): autocannon.Op
         path: '/usage',
         body: JSON.stringify({
           units: args.units.toString(),
-          idempotencyKey: `loadtest-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+          requestId: `loadtest-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
           userId: args.userId,
         }),
         setupRequest: (params: { body: string; headers: Record<string, string> }) => {
@@ -142,7 +142,7 @@ function createLoadTestConfig(args: LoadTestArgs, apiKey: string): autocannon.Op
           const key = `loadtest-${Date.now()}-${++requestCounter}-${Math.random().toString(36).slice(2, 11)}`;
           const body = JSON.stringify({
             units: args.units.toString(),
-            idempotencyKey: key,
+            requestId: key,
             userId: args.userId,
           });
           return {

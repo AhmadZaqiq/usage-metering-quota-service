@@ -55,6 +55,7 @@ export const openApiSpec = {
                   "PAYLOAD_TOO_LARGE",
                   "INTERNAL_ERROR",
                   "TRANSACTION_CONFLICT",
+                  "DATABASE_CAPACITY_EXCEEDED",
                 ],
               },
               message: { type: "string" },
@@ -125,7 +126,7 @@ export const openApiSpec = {
           },
           rejectionReason: {
             type: "string",
-            enum: ["account_exhausted", "user_exhausted", "max_per_request_exceeded"],
+            enum: ["account_quota_exceeded", "user_quota_exceeded", "max_per_request_exceeded"],
             description: "Present only on rejected decisions",
           },
           limitScope: {
@@ -167,6 +168,10 @@ export const openApiSpec = {
         description: "Business conflict (idempotency reuse, missing plan, overlapping assignment)",
         content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
       },
+      PayloadTooLarge: {
+        description: "JSON request body above the 64 KB size limit",
+        content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+      },
       TooManyRequests: {
         description: "Rate limit exceeded (per-IP or per-API-key); includes Retry-After and X-RateLimit-* headers",
         content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
@@ -176,7 +181,8 @@ export const openApiSpec = {
         content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
       },
       ServiceUnavailable: {
-        description: "Deadlock or serialization failure survived all transaction retries; safe to retry",
+        description:
+          "Temporary overload: either a deadlock or serialization failure survived all transaction retries (TRANSACTION_CONFLICT), or the database connection pool could not be acquired within its timeout (DATABASE_CAPACITY_EXCEEDED, includes Retry-After). Safe to retry the request; idempotency keys make retries safe.",
         content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
       },
     },
@@ -283,14 +289,14 @@ export const openApiSpec = {
         tags: ["Usage"],
         summary: "Meter one usage request",
         description:
-          "Evaluates the request against account and user monthly quotas in a single transaction. Reuse an idempotency key to retry safely: the original committed decision is replayed; the same key with a different payload is a 409.",
+          "Evaluates the request against account and user monthly quotas in a single transaction. Reuse a requestId to retry safely: the original committed decision is replayed; the same key with a different payload is a 409. The idempotencyKey field is accepted as a deprecated alias for requestId.",
         requestBody: {
           required: true,
           content: {
             "application/json": {
               schema: {
                 type: "object",
-                required: ["units", "idempotencyKey"],
+                required: ["units", "requestId"],
                 properties: {
                   userId: {
                     type: "string",
@@ -302,7 +308,19 @@ export const openApiSpec = {
                     pattern: "^\\d+$",
                     description: "Positive integer units as a string (1..MAX_UNITS_PER_REQUEST)",
                   },
-                  idempotencyKey: { type: "string", minLength: 1, maxLength: 255 },
+                  requestId: {
+                    type: "string",
+                    minLength: 1,
+                    maxLength: 255,
+                    description: "Client-chosen idempotency key; replay-safe retries use the same value",
+                  },
+                  idempotencyKey: {
+                    type: "string",
+                    minLength: 1,
+                    maxLength: 255,
+                    deprecated: true,
+                    description: "Deprecated alias for requestId; sending both fields is a 400",
+                  },
                 },
               },
             },
@@ -319,6 +337,7 @@ export const openApiSpec = {
           "400": { $ref: "#/components/responses/BadRequest" },
           "401": { $ref: "#/components/responses/Unauthorized" },
           "409": { $ref: "#/components/responses/Conflict" },
+          "413": { $ref: "#/components/responses/PayloadTooLarge" },
           "429": { $ref: "#/components/responses/TooManyRequests" },
           "500": { $ref: "#/components/responses/InternalError" },
           "503": { $ref: "#/components/responses/ServiceUnavailable" },
@@ -338,6 +357,13 @@ export const openApiSpec = {
             in: "query",
             schema: { type: "integer", minimum: 1, maximum: 100, default: 50 },
           },
+          {
+            name: "userId",
+            in: "query",
+            description:
+              "Optional clientUserId filter, resolved within the authenticated account; unknown users are 404",
+            schema: { type: "string", minLength: 1, maxLength: 255 },
+          },
         ],
         responses: {
           "200": {
@@ -347,7 +373,28 @@ export const openApiSpec = {
                 schema: {
                   type: "object",
                   properties: {
-                    items: { type: "array", items: { type: "object", additionalProperties: true } },
+                    items: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        properties: {
+                          id: { type: "string" },
+                          requestId: {
+                            type: "string",
+                            description: "The idempotency key (storage column usage_requests.idempotency_key)",
+                          },
+                          userId: { type: "string", nullable: true },
+                          units: { type: "string" },
+                          decision: { type: "string", enum: ["accepted", "rejected"] },
+                          rejectionReason: { type: "string", nullable: true },
+                          periodStart: { type: "string", format: "date" },
+                          accountRemaining: { type: "string", nullable: true },
+                          userRemaining: { type: "string", nullable: true },
+                          createdAt: { type: "string", format: "date-time" },
+                        },
+                        required: ["id", "requestId", "units", "decision", "periodStart", "createdAt"],
+                      },
+                    },
                     total: { type: "integer" },
                     page: { type: "integer" },
                     limit: { type: "integer" },
@@ -398,6 +445,7 @@ export const openApiSpec = {
           },
           "400": { $ref: "#/components/responses/BadRequest" },
           "401": { $ref: "#/components/responses/Unauthorized" },
+          "413": { $ref: "#/components/responses/PayloadTooLarge" },
           "429": { $ref: "#/components/responses/TooManyRequests" },
         },
       },
@@ -417,7 +465,7 @@ export const openApiSpec = {
                       id: { type: "integer" },
                       prefix: { type: "string" },
                       name: { type: ["string", "null"] },
-                      revoked: { type: "boolean" },
+                      isRevoked: { type: "boolean" },
                       lastUsedAt: { type: ["string", "null"], format: "date-time" },
                       createdAt: { type: "string", format: "date-time" },
                     },
@@ -475,6 +523,7 @@ export const openApiSpec = {
           "400": { $ref: "#/components/responses/BadRequest" },
           "401": { $ref: "#/components/responses/Unauthorized" },
           "409": { $ref: "#/components/responses/Conflict" },
+          "413": { $ref: "#/components/responses/PayloadTooLarge" },
           "429": { $ref: "#/components/responses/TooManyRequests" },
         },
       },
@@ -539,8 +588,10 @@ export const openApiSpec = {
           },
           "400": { $ref: "#/components/responses/BadRequest" },
           "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
           "404": { $ref: "#/components/responses/NotFound" },
           "409": { $ref: "#/components/responses/Conflict" },
+          "413": { $ref: "#/components/responses/PayloadTooLarge" },
           "429": { $ref: "#/components/responses/TooManyRequests" },
         },
       },
@@ -552,6 +603,7 @@ export const openApiSpec = {
           "204": { description: "Plan soft-deleted" },
           "400": { $ref: "#/components/responses/BadRequest" },
           "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
           "404": { $ref: "#/components/responses/NotFound" },
           "409": { $ref: "#/components/responses/Conflict" },
           "429": { $ref: "#/components/responses/TooManyRequests" },
@@ -591,8 +643,10 @@ export const openApiSpec = {
           },
           "400": { $ref: "#/components/responses/BadRequest" },
           "401": { $ref: "#/components/responses/Unauthorized" },
+          "403": { $ref: "#/components/responses/Forbidden" },
           "404": { $ref: "#/components/responses/NotFound" },
           "409": { $ref: "#/components/responses/Conflict" },
+          "413": { $ref: "#/components/responses/PayloadTooLarge" },
           "429": { $ref: "#/components/responses/TooManyRequests" },
         },
       },
@@ -666,6 +720,7 @@ export const openApiSpec = {
           "400": { $ref: "#/components/responses/BadRequest" },
           "401": { $ref: "#/components/responses/Unauthorized" },
           "409": { $ref: "#/components/responses/Conflict" },
+          "413": { $ref: "#/components/responses/PayloadTooLarge" },
           "429": { $ref: "#/components/responses/TooManyRequests" },
         },
       },

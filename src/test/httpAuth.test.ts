@@ -160,7 +160,7 @@ describe("HTTP authentication", () => {
       .get("/usage")
       .set(authHeader(context.apiKey.key));
     expect(usage.status).toBe(200);
-    expect(usage.body.items.map((i: { idempotencyKey: string }) => i.idempotencyKey)).toContain(
+    expect(usage.body.items.map((i: { requestId: string }) => i.requestId)).toContain(
       "http-auth-k2",
     );
   });
@@ -208,7 +208,7 @@ describe("HTTP tenant isolation", () => {
       .set("Authorization", `Bearer ${ctxB.apiKey.key}`);
 
     expect(resB.status).toBe(200);
-    const keys = resB.body.items.map((i: { idempotencyKey: string }) => i.idempotencyKey);
+    const keys = resB.body.items.map((i: { requestId: string }) => i.requestId);
     expect(keys).not.toContain("iso-a-1");
   });
 
@@ -220,5 +220,120 @@ describe("HTTP tenant isolation", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe("AUTHORIZATION_FAILED");
+  });
+});
+
+describe("API key lifecycle over HTTP", () => {
+  let app: ReturnType<typeof createApp>;
+  let context: TestContext;
+
+  beforeEach(async () => {
+    app = createApp();
+    context = await setupBasicTestContext();
+  });
+
+  const authHeader = (key: string) => ({ Authorization: `Bearer ${key}` });
+
+  it("creates a key, discloses the secret exactly once, and authenticates with it", async () => {
+    const created = await request(app)
+      .post("/api-keys")
+      .set(authHeader(context.apiKey.key))
+      .send({ name: "second-key" });
+
+    expect(created.status).toBe(201);
+    expect(created.body.id).toEqual(expect.any(Number));
+    expect(created.body.name).toBe("second-key");
+    expect(created.body.prefix).toMatch(/^[0-9a-f]{16}$/);
+    expect(created.body.key).toMatch(
+      new RegExp(`^${created.body.prefix}\\.[0-9a-f]{64}$`),
+    );
+
+    // One-time disclosure: neither the full key nor its secret part
+    // appears in any subsequent listing.
+    const list = await request(app)
+      .get("/api-keys")
+      .set(authHeader(context.apiKey.key));
+    expect(list.status).toBe(200);
+    const serialized = JSON.stringify(list.body);
+    expect(serialized).not.toContain(created.body.key);
+    expect(serialized).not.toContain(
+      (created.body.key as string).split(".")[1],
+    );
+
+    const listed = (list.body as Array<Record<string, unknown>>).find(
+      (k) => k.id === created.body.id,
+    );
+    expect(listed).toBeDefined();
+    expect(listed!.prefix).toBe(created.body.prefix);
+
+    // The newly issued key authenticates.
+    const usage = await request(app)
+      .post("/usage")
+      .set(authHeader(created.body.key as string))
+      .send({ units: "1", idempotencyKey: "keylifecycle-1" });
+    expect(usage.status).toBe(200);
+    expect(usage.body.decision).toBe("accepted");
+  });
+
+  it("exposes isRevoked and lastUsedAt on the list and sets lastUsedAt after use", async () => {
+    const used = await request(app)
+      .post("/usage")
+      .set(authHeader(context.apiKey.key))
+      .send({ units: "1", idempotencyKey: "keylifecycle-2" });
+    expect(used.status).toBe(200);
+
+    const list = await request(app)
+      .get("/api-keys")
+      .set(authHeader(context.apiKey.key));
+    expect(list.status).toBe(200);
+
+    const keys = list.body as Array<Record<string, unknown>>;
+    const active = keys.find((k) => k.prefix === context.apiKey.prefix);
+    expect(active).toBeDefined();
+    expect(active!.isRevoked).toBe(false);
+    expect(active!.lastUsedAt).not.toBeNull();
+    // Field-name contract: no legacy `revoked` alias (matches the OpenAPI
+    // `ApiKeyInfo` component after the Stage 2 drift fix).
+    expect(keys.some((k) => "revoked" in k)).toBe(false);
+    expect(keys.some((k) => "key" in k)).toBe(false);
+  });
+
+  it("revokes a key over HTTP: 204, the revoked key then gets 401", async () => {
+    const created = await request(app)
+      .post("/api-keys")
+      .set(authHeader(context.apiKey.key))
+      .send({ name: "revoke-me" });
+    expect(created.status).toBe(201);
+
+    const del = await request(app)
+      .delete(`/api-keys/${created.body.id}`)
+      .set(authHeader(context.apiKey.key));
+    expect(del.status).toBe(204);
+
+    // The revoked key can no longer authenticate...
+    const usage = await request(app)
+      .post("/usage")
+      .set(authHeader(created.body.key as string))
+      .send({ units: "1", idempotencyKey: "keylifecycle-3" });
+    expect(usage.status).toBe(401);
+
+    // ...revocation is per key: the original key still works...
+    const still = await request(app)
+      .get("/api-keys")
+      .set(authHeader(context.apiKey.key));
+    expect(still.status).toBe(200);
+
+    // ...and the list reports the entry as revoked.
+    const revoked = (still.body as Array<Record<string, unknown>>).find(
+      (k) => k.id === created.body.id,
+    );
+    expect(revoked).toBeDefined();
+    expect(revoked!.isRevoked).toBe(true);
+
+    // Idempotent contract: a second DELETE is still 204.
+    const again = await request(app)
+      .delete(`/api-keys/${created.body.id}`)
+      .set(authHeader(context.apiKey.key));
+    expect(again.status).toBe(204);
   });
 });

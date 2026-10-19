@@ -655,16 +655,16 @@ describe('Boundary Integration Tests', () => {
       expect(page1.totalPages).toBe(2);
 
       // Items should be ordered by created_at descending (newest first)
-      expect(page1.items[0].idempotencyKey).toBe('history-test-5');
-      expect(page1.items[1].idempotencyKey).toBe('history-test-4');
-      expect(page1.items[2].idempotencyKey).toBe('history-test-3');
+      expect(page1.items[0].requestId).toBe('history-test-5');
+      expect(page1.items[1].requestId).toBe('history-test-4');
+      expect(page1.items[2].requestId).toBe('history-test-3');
 
       // Fetch page 2 with limit 3
       const page2 = await getUsageHistory(BigInt(context.account.id), 2, 3);
 
       expect(page2.items).toHaveLength(2);
-      expect(page2.items[0].idempotencyKey).toBe('history-test-2');
-      expect(page2.items[1].idempotencyKey).toBe('history-test-1');
+      expect(page2.items[0].requestId).toBe('history-test-2');
+      expect(page2.items[1].requestId).toBe('history-test-1');
     });
 
     it('should isolate usage history by account', async () => {
@@ -706,14 +706,14 @@ describe('Boundary Integration Tests', () => {
       // Account 1 should only see its own requests
       const page1 = await getUsageHistory(BigInt(context1.account.id), 1, 10);
       expect(page1.items).toHaveLength(2);
-      expect(page1.items.map((r) => r.idempotencyKey)).toContain('account1-request-1');
-      expect(page1.items.map((r) => r.idempotencyKey)).toContain('account1-request-2');
-      expect(page1.items.map((r) => r.idempotencyKey)).not.toContain('account2-request-1');
+      expect(page1.items.map((r) => r.requestId)).toContain('account1-request-1');
+      expect(page1.items.map((r) => r.requestId)).toContain('account1-request-2');
+      expect(page1.items.map((r) => r.requestId)).not.toContain('account2-request-1');
 
       // Account 2 should only see its own requests
       const page2 = await getUsageHistory(BigInt(context2.account.id), 1, 10);
       expect(page2.items).toHaveLength(1);
-      expect(page2.items[0].idempotencyKey).toBe('account2-request-1');
+      expect(page2.items[0].requestId).toBe('account2-request-1');
     });
 
     it('should return empty results for account with no usage history', async () => {
@@ -743,7 +743,7 @@ describe('Boundary Integration Tests', () => {
 
       expect(page.items).toHaveLength(1);
       const item = page.items[0];
-      expect(item.idempotencyKey).toBe('history-remaining-test');
+      expect(item.requestId).toBe('history-remaining-test');
       expect(item.decision).toBe('accepted');
       expect(item.accountRemaining).toBe('995'); // 1000 - 5
       expect(item.userRemaining).toBe('95'); // 100 - 5
@@ -770,7 +770,7 @@ describe('Boundary Integration Tests', () => {
 
       expect(page.items).toHaveLength(10);
       const newest = page.items[0];
-      expect(newest.idempotencyKey).toBe('exhaust-10');
+      expect(newest.requestId).toBe('exhaust-10');
       expect(newest.decision).toBe('accepted');
       // Zero is a real value: the old falsy check serialized 0n as null.
       expect(newest.accountRemaining).toBe('0');
@@ -1289,7 +1289,7 @@ describe('Boundary Integration Tests', () => {
       expect(decisions).toContain('accepted');
       expect(decisions).toContain('rejected');
       expect(
-        history.items.find((i) => i.idempotencyKey === 'post-downgrade-usage')!.rejectionReason
+        history.items.find((i) => i.requestId === 'post-downgrade-usage')!.rejectionReason
       ).toBe('account_quota_exceeded');
     });
 

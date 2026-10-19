@@ -132,23 +132,116 @@ describe('HTTP usage decision scenarios', () => {
 
     const history = await request(app).get('/usage').set(auth(context.apiKey.key));
     const matches = history.body.items.filter(
-      (i: { idempotencyKey: string }) => i.idempotencyKey === 'scen-idem-replay'
+      (i: { requestId: string }) => i.requestId === 'scen-idem-replay'
     );
     expect(matches).toHaveLength(1);
+  });
+
+  it('replays a max_per_request_exceeded rejection with the stored decision but without limitScope', async () => {
+    const body = {
+      userId: context.user.clientUserId,
+      units: '11', // user plan per-request cap is 10
+      idempotencyKey: 'scen-limitscope-replay',
+    };
+
+    // Live evaluation carries limitScope (documented contract).
+    const first = await postUsage(body);
+    expect(first.status).toBe(200);
+    expect(first.body.decision).toBe('rejected');
+    expect(first.body.rejectionReason).toBe('max_per_request_exceeded');
+    expect(first.body.limitScope).toBe('user');
+    expect(first.body.accountRemaining).toBe('1000');
+    expect(first.body.userRemaining).toBe('100');
+
+    // Replay returns the same persisted decision and stored remainings...
+    const replay = await postUsage(body);
+    expect(replay.status).toBe(200);
+    expect(replay.body.decision).toBe(first.body.decision);
+    expect(replay.body.rejectionReason).toBe(first.body.rejectionReason);
+    expect(replay.body.accountRemaining).toBe(first.body.accountRemaining);
+    expect(replay.body.userRemaining).toBe(first.body.userRemaining);
+    expect(replay.body.periodStart).toBe(first.body.periodStart);
+    // ...but continues to omit limitScope, which is not persisted
+    // (README.md: replay omits it rather than re-evaluating quota).
+    expect('limitScope' in replay.body).toBe(false);
+  });
+
+  it('converges concurrent duplicate rejections on one persisted row, with limitScope only on the live evaluation', async () => {
+    const body = {
+      units: '101', // account-scoped; account plan per-request cap is 100
+      idempotencyKey: 'scen-limitscope-race',
+    };
+
+    const responses = await Promise.all(
+      Array.from({ length: 8 }, () => postUsage(body)),
+    );
+
+    // Every duplicate observes the identical persisted decision.
+    const distinct = new Set(
+      responses.map(
+        (r) => `${r.status}:${r.body.decision}:${r.body.rejectionReason}:${r.body.accountRemaining}`,
+      ),
+    );
+    expect(distinct.size).toBe(1);
+    const [only] = responses;
+    expect(only.status).toBe(200);
+    expect(only.body.decision).toBe('rejected');
+    expect(only.body.rejectionReason).toBe('max_per_request_exceeded');
+    expect(only.body.accountRemaining).toBe('1000');
+
+    // Exactly the winning INSERT returns a live evaluation (limitScope
+    // present); every other duplicate converges through the replay or
+    // race-lost path, which omits it by contract.
+    const live = responses.filter((r) => r.body.limitScope !== undefined);
+    const converged = responses.filter((r) => r.body.limitScope === undefined);
+    expect(live.length).toBeGreaterThanOrEqual(1);
+    expect(converged.length).toBeGreaterThanOrEqual(1);
+    for (const res of live) {
+      expect(res.body.limitScope).toBe('account');
+    }
+
+    const history = await request(app).get('/usage').set(auth(context.apiKey.key));
+    const matches = history.body.items.filter(
+      (i: { requestId: string }) => i.requestId === 'scen-limitscope-race',
+    );
+    expect(matches).toHaveLength(1); // eight requests, one decision row
   });
 
   it('returns 409 CONFLICT when an idempotency key is reused with different input', async () => {
     const first = await postUsage({
       userId: context.user.clientUserId,
       units: '5',
-      idempotencyKey: 'scen-idem-conflict',
+      requestId: 'scen-idem-conflict',
     });
     expect(first.status).toBe(200);
 
     const second = await postUsage({
       userId: context.user.clientUserId,
       units: '6',
-      idempotencyKey: 'scen-idem-conflict',
+      requestId: 'scen-idem-conflict',
+    });
+    expect(second.status).toBe(409);
+    expect(second.body.error.code).toBe('CONFLICT');
+  });
+
+  it('returns 409 CONFLICT when the same requestId is reused for a different user', async () => {
+    const first = await postUsage({
+      userId: context.user.clientUserId,
+      units: '1',
+      requestId: 'scen-idem-user-conflict',
+    });
+    expect(first.status).toBe(200);
+
+    const created = await request(app)
+      .post('/users')
+      .set(auth(context.apiKey.key))
+      .send({ clientUserId: 'scen-idem-other-user' });
+    expect(created.status).toBe(201);
+
+    const second = await postUsage({
+      userId: 'scen-idem-other-user',
+      units: '1',
+      requestId: 'scen-idem-user-conflict',
     });
     expect(second.status).toBe(409);
     expect(second.body.error.code).toBe('CONFLICT');
@@ -205,7 +298,7 @@ describe('HTTP usage history pagination', () => {
     expect(page2.body.page).toBe(2);
 
     const seenKeys = [...page1.body.items, ...page2.body.items].map(
-      (i: { idempotencyKey: string }) => i.idempotencyKey
+      (i: { requestId: string }) => i.requestId
     );
     expect(seenKeys.sort()).toEqual(['page-item-1', 'page-item-2', 'page-item-3']);
   });
@@ -312,5 +405,110 @@ describe('HTTP plan management and assignment flow', () => {
     });
     expect(usageOtherUser.status).toBe(404);
     expect(usageOtherUser.body.error.code).toBe('NOT_FOUND');
+  });
+});
+
+describe('HTTP usage history filtering and tenant isolation', () => {
+  let app: ReturnType<typeof createApp>;
+  let context: TestContext;
+
+  beforeEach(async () => {
+    app = createApp();
+    context = await setupBasicTestContext();
+  });
+
+  const auth = (key: string) => ({ Authorization: `Bearer ${key}` });
+
+  it("GET /usage?userId returns only that user's rows, excluding account-scoped rows", async () => {
+    const accountScoped = await request(app)
+      .post('/usage')
+      .set(auth(context.apiKey.key))
+      .send({ units: '2', requestId: 'filter-acct-1' });
+    expect(accountScoped.status).toBe(200);
+
+    const userScoped = await request(app)
+      .post('/usage')
+      .set(auth(context.apiKey.key))
+      .send({ userId: context.user.clientUserId, units: '3', requestId: 'filter-user-1' });
+    expect(userScoped.status).toBe(200);
+
+    const filtered = await request(app)
+      .get(`/usage?userId=${context.user.clientUserId}`)
+      .set(auth(context.apiKey.key));
+    expect(filtered.status).toBe(200);
+    expect(filtered.body.items).toHaveLength(1);
+    expect(filtered.body.items[0].requestId).toBe('filter-user-1');
+    expect(filtered.body.total).toBe(1);
+
+    const unfiltered = await request(app).get('/usage').set(auth(context.apiKey.key));
+    expect(unfiltered.status).toBe(200);
+    expect(unfiltered.body.items).toHaveLength(2);
+  });
+
+  it('GET /usage?userId returns 404 for a user unknown to the account', async () => {
+    const res = await request(app)
+      .get('/usage?userId=no-such-client-user')
+      .set(auth(context.apiKey.key));
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('NOT_FOUND');
+  });
+
+  it('F-ISO-1: the same clientUserId in two accounts resolves and filters independently', async () => {
+    const shared = 'iso-shared-client-user';
+    const ctxB = await setupBasicTestContext();
+
+    // Account A: create the user, assign A's user plan, consume 3 units.
+    const userA = await request(app)
+      .post('/users')
+      .set(auth(context.apiKey.key))
+      .send({ clientUserId: shared });
+    expect(userA.status).toBe(201);
+    const assignA = await request(app)
+      .post('/assignments')
+      .set(auth(context.apiKey.key))
+      .send({ planId: context.userPlan.id, userId: shared });
+    expect(assignA.status).toBe(201);
+    const usageA = await request(app)
+      .post('/usage')
+      .set(auth(context.apiKey.key))
+      .send({ userId: shared, units: '3', requestId: 'iso-a-usage' });
+    expect(usageA.status).toBe(200);
+    expect(usageA.body.decision).toBe('accepted');
+
+    // Account B: same clientUserId string, independent user row and plan.
+    const userB = await request(app)
+      .post('/users')
+      .set(auth(ctxB.apiKey.key))
+      .send({ clientUserId: shared });
+    expect(userB.status).toBe(201);
+    expect(userB.body.id).not.toBe(userA.body.id);
+    const assignB = await request(app)
+      .post('/assignments')
+      .set(auth(ctxB.apiKey.key))
+      .send({ planId: ctxB.userPlan.id, userId: shared });
+    expect(assignB.status).toBe(201);
+    const usageB = await request(app)
+      .post('/usage')
+      .set(auth(ctxB.apiKey.key))
+      .send({ userId: shared, units: '4', requestId: 'iso-b-usage' });
+    expect(usageB.status).toBe(200);
+    expect(usageB.body.decision).toBe('accepted');
+
+    // The same filter string returns account-scoped results on each side.
+    const histA = await request(app)
+      .get(`/usage?userId=${shared}`)
+      .set(auth(context.apiKey.key));
+    expect(histA.status).toBe(200);
+    expect(histA.body.items).toHaveLength(1);
+    expect(histA.body.items[0].units).toBe('3');
+    expect(histA.body.items[0].requestId).toBe('iso-a-usage');
+
+    const histB = await request(app)
+      .get(`/usage?userId=${shared}`)
+      .set(auth(ctxB.apiKey.key));
+    expect(histB.status).toBe(200);
+    expect(histB.body.items).toHaveLength(1);
+    expect(histB.body.items[0].units).toBe('4');
+    expect(histB.body.items[0].requestId).toBe('iso-b-usage');
   });
 });
