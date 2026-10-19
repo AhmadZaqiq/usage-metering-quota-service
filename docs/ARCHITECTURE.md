@@ -54,7 +54,7 @@ HTTP Request
 │  src/infrastructure/                                           │
 │  • repositories/   data access (Drizzle + raw SQL)           │
 │  • auth/           API key verification (repo + crypto)      │
-│  • rateLimiter.ts  Redis-backed rate limiting (memory fallback)            │
+│  • rateLimiter.ts  In-process rate limiting (bounded store)               │
 └──────────────────────────┬──────────────────────────────────┘
                            │ calls
                            ▼
@@ -128,7 +128,7 @@ No circular dependencies are permitted.
 ### Infrastructure (`src/infrastructure/`)
 - **Repositories**: All Drizzle queries, raw SQL, locking, row mapping
 - **Auth infrastructure**: API key verification (hash + repository lookup)
-- **Rate limiting**: Two layers (per-IP pre-auth, per-API-key post-auth) over a Redis store with in-process fallback and fail-closed behavior
+- **Rate limiting**: Two layers (per-IP pre-auth, per-API-key post-auth) over a bounded in-process store with fail-closed behavior; counters are per process (not shared across replicas)
 - **Must not**: Contain business workflow rules or HTTP handling
 
 ### Database (`src/db/`)
@@ -241,10 +241,10 @@ Presentation: HTTP Response (200 accepted/rejected, 409 conflict, etc.)
 
 ## Known Limitations
 
-1. **Rate Limiter**: Redis-backed when `REDIS_URL` is configured, else in-process (bounded to 10,000 keys with oldest-first eviction); if both stores fail at runtime the limiter fails **closed** (429). Counters are per-instance without Redis
+1. **Rate Limiter**: In-process only — a bounded store (10,000 keys, oldest-first eviction after expired-entry reclamation); if the store fails at runtime the limiter fails **closed** (429). Counters are per process: they reset on restart and are not shared across replicas
 2. **Idempotency Key Retention**: Indefinite; no TTL or archival
 3. **No Distributed Tracing**: Single-instance observability only
-4. **Horizontal Scaling**: Single app instance; rate limiter state not shared without Redis
+4. **Horizontal Scaling**: Single app instance; rate limiter state is per process by design (see limitation 1)
 5. **`int8` parsing (audit DB-08)**: BigInt coercion is localized to repository mapping boundaries instead of a global `pg` type parser (deferred, see README "Known Limitations & Deferred Findings")
 
 ---

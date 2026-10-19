@@ -1,4 +1,3 @@
-import { Redis as RedisClient } from 'ioredis';
 import { Request, Response, NextFunction } from 'express';
 import { getEnv } from '../config/index.js';
 import { logger } from '../logging/logger.js';
@@ -15,13 +14,15 @@ export interface RateLimiterStore {
   close(): Promise<void>;
 }
 
-// Bounds the in-memory fallback so attacker-controlled key cardinality
+// Bounds the in-process store so attacker-controlled key cardinality
 // (many distinct IPs) cannot grow the map without limit.
 const MEMORY_STORE_MAX_ENTRIES = 10_000;
 
 export class MemoryStore implements RateLimiterStore {
   private hits = new Map<string, { count: number; resetTime: number }>();
 
+  // Increment is fully synchronous between read and write, so concurrent
+  // requests within this process cannot interleave and lose counts.
   increment(key: string, windowMs: number): Promise<RateLimitInfo> {
     const now = Date.now();
     const entry = this.hits.get(key);
@@ -77,68 +78,7 @@ export class MemoryStore implements RateLimiterStore {
   }
 }
 
-class RedisStore implements RateLimiterStore {
-  private client: RedisClient;
-  private keyPrefix: string;
-
-  constructor(redisUrl: string, keyPrefix = 'ratelimit:') {
-    this.client = new RedisClient(redisUrl, {
-      maxRetriesPerRequest: 3,
-      retryStrategy: (times: number) => {
-        if (times > 3) return null;
-        return Math.min(times * 100, 3000);
-      },
-      lazyConnect: true,
-    });
-    this.keyPrefix = keyPrefix;
-
-    this.client.on('error', (err: Error) => {
-      logger.error({ err }, 'Redis rate limiter connection error');
-    });
-  }
-
-  async connect(): Promise<void> {
-    await this.client.connect();
-  }
-
-  async increment(key: string, windowMs: number): Promise<RateLimitInfo> {
-    const fullKey = `${this.keyPrefix}${key}`;
-    const windowSec = Math.ceil(windowMs / 1000);
-    const now = Math.floor(Date.now() / 1000);
-    const resetTime = (now + windowSec) * 1000;
-
-    const multi = this.client.multi();
-    multi.incr(fullKey);
-    multi.expire(fullKey, windowSec, 'NX');
-    const results = await multi.exec();
-
-    if (!results) {
-      throw new Error('Redis multi exec returned null');
-    }
-
-    const err = results[0][0];
-    if (err) {
-      throw err;
-    }
-    const total = results[0][1] as number;
-
-    return { total, remaining: Math.max(0, total - 1), resetTime };
-  }
-
-  async reset(key: string): Promise<void> {
-    const fullKey = `${this.keyPrefix}${key}`;
-    await this.client.del(fullKey);
-  }
-
-  async close(): Promise<void> {
-    await this.client.quit();
-  }
-}
-
-let redisStore: RedisStore | null = null;
-let redisUsable = false;
 let memoryStore: MemoryStore | null = null;
-let redisCloseLogged = false;
 
 function getMemoryStore(): MemoryStore {
   if (!memoryStore) {
@@ -147,67 +87,16 @@ function getMemoryStore(): MemoryStore {
   return memoryStore;
 }
 
-function ensureRedisStore(redisUrl: string): RedisStore {
-  if (!redisStore) {
-    const store = new RedisStore(redisUrl);
-    redisStore = store;
-    store
-      .connect()
-      .then(() => {
-        redisUsable = true;
-        logger.info('Redis rate limiter connected');
-      })
-      .catch((err: Error) => {
-        redisUsable = false;
-        logger.error(
-          { err },
-          'Failed to connect to Redis for rate limiting, using in-process memory store'
-        );
-      });
-  }
-  return redisStore;
-}
-
-function markRedisUnusable(err: Error): void {
-  if (redisUsable || !redisCloseLogged) {
-    logger.error(
-      { err },
-      'Redis rate limiter failed at runtime, switching to in-process memory store'
-    );
-  }
-  redisUsable = false;
-  redisCloseLogged = true;
-}
-
 /**
- * Returns the store that should currently own the counters.
- * Policy: Redis when configured and healthy, otherwise an in-process
- * bounded MemoryStore. The limiter never silently disables itself.
+ * Returns the process-wide rate-limit store.
+ *
+ * The limiter is in-process only: counters are local to this Node.js
+ * process, reset on restart, and never shared across application replicas.
+ * The store is bounded (see MEMORY_STORE_MAX_ENTRIES) and never disables
+ * itself — enforcement always continues within the process.
  */
 export function getRateLimiterStore(): RateLimiterStore {
-  const env = getEnv();
-
-  if (env.REDIS_URL) {
-    const store = ensureRedisStore(env.REDIS_URL);
-    if (redisUsable) {
-      return store;
-    }
-    return getMemoryStore();
-  }
-
   return getMemoryStore();
-}
-
-async function incrementWithFallback(key: string, windowMs: number): Promise<RateLimitInfo> {
-  const store = getRateLimiterStore();
-  try {
-    return await store.increment(key, windowMs);
-  } catch (err) {
-    // Primary store failed mid-request: mark it unusable and count this
-    // request in the in-process fallback so the limit still applies.
-    markRedisUnusable(err as Error);
-    return await getMemoryStore().increment(key, windowMs);
-  }
 }
 
 function applyHeaders(res: Response, info: RateLimitInfo, max: number): void {
@@ -239,14 +128,14 @@ export function createIpRateLimiterMiddleware() {
   return async (req: Request, res: Response, next: NextFunction) => {
     const key = `ip:${req.ip}`;
     try {
-      const info = await incrementWithFallback(key, env.RATE_LIMIT_WINDOW_MS);
+      const info = await getRateLimiterStore().increment(key, env.RATE_LIMIT_WINDOW_MS);
       applyHeaders(res, info, env.RATE_LIMIT_MAX);
       if (info.total > env.RATE_LIMIT_MAX) {
         return tooManyRequests(res, info);
       }
       next();
     } catch (err) {
-      // Last-resort failure (even the memory store failed): fail closed.
+      // Last-resort failure (the store itself failed): fail closed.
       // Silently allowing the request would disable the limiter entirely.
       logger.error({ err, key }, 'Rate limiter failed, rejecting request');
       return tooManyRequests(res);
@@ -264,7 +153,7 @@ export function createIdentityRateLimiterMiddleware() {
   return async (req: Request, res: Response, next: NextFunction) => {
     const key = req.apiKeyId !== undefined ? `key:${req.apiKeyId}` : `ip:${req.ip}`;
     try {
-      const info = await incrementWithFallback(key, env.RATE_LIMIT_WINDOW_MS);
+      const info = await getRateLimiterStore().increment(key, env.RATE_LIMIT_WINDOW_MS);
       applyHeaders(res, info, env.RATE_LIMIT_MAX);
       if (info.total > env.RATE_LIMIT_MAX) {
         return tooManyRequests(res, info);
@@ -278,16 +167,8 @@ export function createIdentityRateLimiterMiddleware() {
 }
 
 export async function closeRateLimiterStore(): Promise<void> {
-  const closers: Promise<void>[] = [];
-  if (redisStore) {
-    closers.push(redisStore.close().catch(() => undefined));
-    redisStore = null;
-    redisUsable = false;
-    redisCloseLogged = false;
-  }
   if (memoryStore) {
-    closers.push(memoryStore.close());
+    await memoryStore.close();
     memoryStore = null;
   }
-  await Promise.all(closers);
 }

@@ -1,20 +1,24 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app.js';
+import { closeRateLimiterStore } from '../infrastructure/rateLimiter.js';
 import { setupBasicTestContext, TestContext } from './utils.js';
 
 // Two-layer fail-closed rate limiting observed purely over HTTP: requests are
 // counted per authenticated key after auth resolves (and per IP before auth).
 // With the default budget of 100 requests per 60s, the 101st request must be
 // rejected with 429 RATE_LIMITED and the documented headers.
-// Kept in its own file so the in-process MemoryStore of other test files
-// cannot share counters with this budget-exhaustion scenario.
+// The limiter store is process-wide, so each test resets it first; the store
+// itself is in-process only (no external backend).
 
 describe('HTTP rate limit exhaustion', () => {
   let app: ReturnType<typeof createApp>;
   let context: TestContext;
 
   beforeEach(async () => {
+    // Fresh counters for every test (models a restart; the limiter is
+    // in-process and has no external store to clear).
+    await closeRateLimiterStore();
     app = createApp();
     context = await setupBasicTestContext();
   });
@@ -61,6 +65,35 @@ describe('HTTP rate limit exhaustion', () => {
         .get('/plans')
         .set('Authorization', `Bearer ${key}`);
       expect(stillLimited.status).toBe(429);
+    }
+  );
+
+  it(
+    'enforces the shared in-process budget under a concurrent burst',
+    { timeout: 60_000 },
+    async () => {
+      const key = context.apiKey.key;
+
+      // One burst of 130 parallel requests: within a single Node.js process
+      // the counter updates are synchronous, so exactly the configured
+      // budget (100) may pass and the remaining 30 must be rejected —
+      // no lost updates, no overshoot.
+      const responses = await Promise.all(
+        Array.from({ length: 130 }, () =>
+          request(app).get('/plans').set('Authorization', `Bearer ${key}`)
+        )
+      );
+
+      const accepted = responses.filter((r) => r.status === 200).length;
+      const limited = responses.filter((r) => r.status === 429);
+      expect(accepted).toBe(100);
+      expect(limited).toHaveLength(30);
+
+      const sample = limited[0]!;
+      expect(sample.body.error.code).toBe('RATE_LIMITED');
+      expect(sample.headers['retry-after']).toBeDefined();
+      expect(sample.headers['x-ratelimit-limit']).toBe('100');
+      expect(sample.headers['x-ratelimit-remaining']).toBe('0');
     }
   );
 });

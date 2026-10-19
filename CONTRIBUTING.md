@@ -119,7 +119,7 @@ test: add concurrent quota exhaustion test
 
 ## Known Constraints
 
-- **Rate Limiter**: Redis-backed when `REDIS_URL` is set, with a bounded in-process fallback; per-instance counters without Redis
+- **Rate Limiter**: Bounded in-process store (per-instance counters; resets on restart, not shared across replicas); fail-closed (429) if the store fails
 - **Drizzle Partial Indexes**: Custom SQL migrations required for some constraints
 - **BigInt Serialization**: JSON responses stringify BigInt values
 - **Idempotency Keys**: Never expire (indefinite retention)
