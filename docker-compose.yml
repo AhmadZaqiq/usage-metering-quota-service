@@ -68,7 +68,7 @@ services:
       app:
         condition: service_healthy
     # Demo CLI: reads the API key from the shared secrets volume itself.
-    command: ["node", "dist/scripts/client.js", "-u", "http://app:3000"]
+    command: ["node", "dist/cli/index.js", "-u", "http://app:3000"]
     volumes:
       - bootstrap-secrets:/run/secrets
 

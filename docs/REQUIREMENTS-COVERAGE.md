@@ -82,7 +82,7 @@ automated test that would fail if the behavior regressed.
 | Test suite runnable inside Docker | Profile-gated `tests` service (build-stage image → `postgres-test`) | `docker compose --profile tests run --rm tests` → 21 files / 223 tests |
 | Disposable app stack for smoke tests | `app-test` profile (port 3001, own database container, no named volumes) | `/health/ready` → 200 |
 | Reproducible load-test script | `src/scripts/loadtest.ts` (localhost-only guard), `loadtest` profile (host networking → `localhost:3001`), perf evidence under `docs/performance/` | Profile run exit 0, 0 errors, all 2xx |
-| Example client with demo + per-operation commands | `src/scripts/client.ts` (`demo` default, `consume`, `usage`, `history`; legacy `-n`/`-i` map through) | Demo: 57/57 checks, prints `All demo assertions passed.`; with `DATABASE_URL` also prints `All accounting invariants passed.` |
+| Example client with demo + per-operation commands | `src/cli/index.ts` (`demo` default, `consume`, `usage`, `history`; legacy `-n`/`-i` map through) | Demo: 59/59 checks, prints `All demo assertions passed.`; with `DATABASE_URL` also prints `All accounting invariants passed.` |
 | One-command verification | `npm run verify` (typecheck+lint+build+tests), `npm run verify:all` (adds invariant verifier) | Both exit 0 |
 | Complete README | `README.md` (+ `CONTRIBUTING.md`, `docs/ARCHITECTURE.md`, this file) | Reviewed against the implementation |
 

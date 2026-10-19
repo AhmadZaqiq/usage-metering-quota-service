@@ -1,6 +1,0 @@
-um-extreme-app cpu=0.06% mem=59.11MiB / 7.729GiB
-um-extreme-db cpu=3.72% mem=241.1MiB / 7.729GiB
-um-extreme-redis cpu=0.46% mem=5.273MiB / 7.729GiB
-usage-metering-db cpu=0.03% mem=54.44MiB / 7.729GiB
-usage-metering-app cpu=3.23% mem=48.32MiB / 7.729GiB
-usage-metering-redis cpu=0.43% mem=9.516MiB / 7.729GiB

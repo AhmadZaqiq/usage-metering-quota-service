@@ -1,1 +1,0 @@
-a-multi8x50 accounts=8 x c=50 (total 400) aggregateRps=95.97 perAccount[min..max]=11.7..12.3 p50[med]=3949 p99[med]=5396 errors=0 timeouts=0 non2xx=0 resets=0

@@ -1,1 +1,0 @@
-a-c650-repeat c=650 d=60s rps=124.2 total=7451 p50=5107 p90=5547 p99=6178 max=7946 errors=0 timeouts=0 non2xx=0 resets=0 statuses[200:7451]
