@@ -61,6 +61,27 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
     });
   }
 
+  // pg-pool connection-acquisition timeout (connectionTimeoutMillis): the
+  // request never reached PostgreSQL, so nothing was executed, committed, or
+  // reserved. That is temporary overload, not an internal fault. The error is
+  // a plain Error with no SQLSTATE, so it is matched narrowly (exact message
+  // AND absence of `code`) and must not swallow unrelated database errors —
+  // a SQLSTATE-bearing error continues into the branch below.
+  if (
+    err instanceof Error &&
+    err.message === 'timeout exceeded when trying to connect' &&
+    !('code' in err)
+  ) {
+    logger.warn({ err, requestId }, 'Database pool acquisition timeout (overload)');
+    res.setHeader('Retry-After', '1');
+    return res.status(503).json({
+      error: {
+        code: 'DATABASE_CAPACITY_EXCEEDED',
+        message: 'Database is temporarily at capacity, please retry',
+      },
+    });
+  }
+
   if (err && typeof err === 'object' && 'code' in err && pgErrorCode(err.code as string)) {
     const pgErr = err as { code: string; message: string; constraint?: string };
     logger.error(
