@@ -550,3 +550,48 @@ export async function getCurrentAssignmentsWithPlan(
 
   return result.rows.map(mapRowToAssignmentWithPlan);
 }
+
+export interface CurrentPlanSummaryRow {
+  userId: bigint | null;
+  planId: bigint;
+  planName: string;
+  monthlyAllowance: bigint;
+  maxUnitsPerRequest: bigint;
+}
+
+/**
+ * One row per subject (account-level row first via NULLS FIRST, then each
+ * user's most recent effective assignment) with the plan values the usage
+ * summary needs. Same active/not-deleted plan filter as the usage hot path;
+ * one statement replaces per-user plan lookups.
+ */
+export async function selectCurrentPlanSummaries(
+  tx: Transaction,
+  accountId: bigint,
+  at: Date = new Date(),
+): Promise<CurrentPlanSummaryRow[]> {
+  const result = await tx.execute(sql`
+    SELECT DISTINCT ON (plan_assignments.user_id)
+           plan_assignments.user_id as "userId",
+           plan_assignments.plan_id as "planId",
+           plans.name as "planName",
+           plans.monthly_allowance as "monthlyAllowance",
+           plans.max_units_per_request as "maxUnitsPerRequest"
+    FROM plan_assignments
+    INNER JOIN plans ON plan_assignments.plan_id = plans.id
+    WHERE plan_assignments.account_id = ${accountId}
+      AND plan_assignments.effective_from <= ${at}
+      AND (plan_assignments.effective_to IS NULL OR plan_assignments.effective_to > ${at})
+      AND plans.is_active
+      AND plans.deleted_at IS NULL
+    ORDER BY plan_assignments.user_id NULLS FIRST, plan_assignments.effective_from DESC
+  `);
+
+  return result.rows.map((row) => ({
+    userId: row.userId !== null && row.userId !== undefined ? BigInt(row.userId as string) : null,
+    planId: BigInt(row.planId as string),
+    planName: row.planName as string,
+    monthlyAllowance: BigInt(row.monthlyAllowance as string),
+    maxUnitsPerRequest: BigInt(row.maxUnitsPerRequest as string),
+  }));
+}

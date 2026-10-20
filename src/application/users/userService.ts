@@ -5,6 +5,7 @@ import {
   selectUsersByAccount,
 } from "../../infrastructure/repositories/userRepository.js";
 import { ValidationError } from "../../errors/AppError.js";
+import { unwrapQueryError } from "../../domain/pgError.js";
 
 export interface UserInfo {
   id: number;
@@ -30,7 +31,7 @@ export async function createUser(accountId: number, clientUserId: string): Promi
         createdAt: user.createdAt,
       };
     } catch (err) {
-      const pgCode = (err as { code?: string }).code;
+      const pgCode = (unwrapQueryError(err) as { code?: string }).code;
       if (pgCode === "23505") {
         // uq_users_account_client_user unique constraint violated
         throw new ValidationError("User with this identifier already exists");

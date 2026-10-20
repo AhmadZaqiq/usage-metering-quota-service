@@ -10,7 +10,7 @@ import { NextFunction, Request, Response, RequestHandler } from "express";
  * closes the HTTP socket without sending a response.
  */
 export function asyncHandler(
-  fn: (req: Request, res: Response, next: NextFunction) => Promise<unknown>
+  fn: (req: Request, res: Response, next: NextFunction) => unknown
 ): RequestHandler {
   return (req: Request, res: Response, next: NextFunction): void => {
     Promise.resolve(fn(req, res, next)).catch(next);

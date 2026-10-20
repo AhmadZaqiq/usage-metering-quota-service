@@ -26,6 +26,8 @@ const EXPECTED_OPERATIONS = [
   "get /assignments/current",
   "post /users",
   "get /users",
+  "post /accounts",
+  "get /usage/summary",
 ];
 
 describe("OpenAPI documentation", () => {

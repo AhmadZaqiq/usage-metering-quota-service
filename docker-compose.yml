@@ -39,6 +39,8 @@ services:
       RATE_LIMIT_MAX: "${RATE_LIMIT_MAX:-100}"
       BOOTSTRAP_ACCOUNT_NAME: "Acme Corp"
       BOOTSTRAP_API_KEY_NAME: "Default Key"
+      # Operator credential for POST /accounts; empty disables provisioning (404).
+      OPERATOR_TOKEN: "${OPERATOR_TOKEN:-}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -147,6 +149,7 @@ services:
       RATE_LIMIT_MAX: "${RATE_LIMIT_MAX:-100}"
       BOOTSTRAP_ACCOUNT_NAME: "App Test Account"
       BOOTSTRAP_API_KEY_NAME: "App Test Key"
+      OPERATOR_TOKEN: "${OPERATOR_TOKEN:-}"
     depends_on:
       postgres-app-test:
         condition: service_healthy

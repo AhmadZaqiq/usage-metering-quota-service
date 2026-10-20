@@ -22,6 +22,15 @@ const EnvSchema = z.object({
   BOOTSTRAP_ACCOUNT_NAME: z.string().optional(),
   BOOTSTRAP_API_KEY_NAME: z.string().optional(),
 
+  // Shared operator credential for POST /accounts (account provisioning).
+  // Separate from tenant API keys; when unset the endpoint is disabled (404).
+  // Compose interpolation emits "" when the variable is unset — treat empty
+  // (or whitespace) exactly like unset instead of failing validation.
+  OPERATOR_TOKEN: z.preprocess(
+    (v) => (typeof v === "string" && v.trim() === "" ? undefined : v),
+    z.string().min(16).optional()
+  ),
+
   TRUST_PROXY: BooleanString.default(false),
 });
 

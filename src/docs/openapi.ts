@@ -24,6 +24,7 @@ export const openApiSpec = {
     { name: "Plans", description: "Manage account-owned and system plans" },
     { name: "Assignments", description: "Assign plans to accounts and users" },
     { name: "Users", description: "Manage tenant-scoped users" },
+    { name: "Accounts", description: "Operator-gated account provisioning (OPERATOR_TOKEN, not a tenant API key)" },
   ],
   components: {
     securitySchemes: {
@@ -31,6 +32,12 @@ export const openApiSpec = {
         type: "http",
         scheme: "bearer",
         description: "Full API key returned once at creation: Authorization: Bearer <prefix>.<secret>",
+      },
+      operatorToken: {
+        type: "http",
+        scheme: "bearer",
+        description:
+          "Shared operator credential (OPERATOR_TOKEN environment variable) for POST /accounts; never a tenant API key. Disabled with 404 when the variable is unset.",
       },
     },
     schemas: {
@@ -107,6 +114,95 @@ export const openApiSpec = {
           clientUserId: { type: "string", maxLength: 255 },
           isActive: { type: "boolean" },
           createdAt: { type: "string", format: "date-time" },
+        },
+      },
+      UsageSummaryBlock: {
+        type: "object",
+        description:
+          "Consumed/remaining for one UTC month. Plan fields are null when no effective assignment exists; remaining is then null (a metered write would 409 instead). Historical consumed is exact; allowance/remaining always reflect the currently effective plan.",
+        properties: {
+          planId: { type: ["string", "null"] },
+          planName: { type: ["string", "null"] },
+          monthlyAllowance: {
+            type: ["string", "null"],
+            pattern: "^\\d+$",
+            description: "Null when no effective plan is assigned",
+          },
+          maxUnitsPerRequest: {
+            type: ["string", "null"],
+            pattern: "^\\d+$",
+            description: "Null when no effective plan is assigned",
+          },
+          consumed: { $ref: "#/components/schemas/PositiveIntegerString" },
+          remaining: {
+            type: ["string", "null"],
+            pattern: "^\\d+$",
+            description: "Null when no effective plan is assigned; otherwise never negative (clamped at 0)",
+          },
+        },
+      },
+      UsageSummary: {
+        type: "object",
+        required: ["periodStart", "account", "users"],
+        properties: {
+          periodStart: {
+            type: "string",
+            pattern: "^\\d{4}-\\d{2}-01$",
+            description: "First day of the summarized UTC month",
+          },
+          account: {
+            allOf: [
+              { $ref: "#/components/schemas/UsageSummaryBlock" },
+              {
+                type: "object",
+                required: ["accountId"],
+                properties: { accountId: { type: "string" } },
+              },
+            ],
+          },
+          users: {
+            type: "array",
+            items: {
+              allOf: [
+                { $ref: "#/components/schemas/UsageSummaryBlock" },
+                {
+                  type: "object",
+                  required: ["userId", "clientUserId", "isActive"],
+                  properties: {
+                    userId: { type: "string" },
+                    clientUserId: { type: "string", maxLength: 255 },
+                    isActive: { type: "boolean" },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+      AccountProvisioning: {
+        type: "object",
+        required: ["account", "apiKey"],
+        properties: {
+          account: {
+            type: "object",
+            required: ["id", "name", "createdAt"],
+            properties: {
+              id: { type: "integer" },
+              name: { type: "string", maxLength: 255 },
+              createdAt: { type: "string", format: "date-time" },
+            },
+          },
+          apiKey: {
+            type: "object",
+            required: ["id", "prefix", "name", "key"],
+            description: "The full key is returned exactly once here and never stored in plaintext.",
+            properties: {
+              id: { type: "integer" },
+              prefix: { type: "string" },
+              name: { type: ["string", "null"] },
+              key: { type: "string", description: "prefix.secret — store immediately; it cannot be retrieved again" },
+            },
+          },
         },
       },
       UsageDecision: {
@@ -195,6 +291,52 @@ export const openApiSpec = {
   },
   security: [{ apiKey: [] }],
   paths: {
+    "/accounts": {
+      post: {
+        tags: ["Accounts"],
+        summary: "Provision a new account with its first API key (operator only)",
+        description:
+          "Requires the shared OPERATOR_TOKEN as a bearer credential (never a tenant API key). Creates the account, its default Starter plan assignment, and its first API key atomically in one transaction. The plaintext key is returned exactly once; only its SHA-256 hash is stored. Responds 404 when OPERATOR_TOKEN is not configured on this deployment.",
+        security: [{ operatorToken: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["name"],
+                properties: {
+                  name: { type: "string", minLength: 1, maxLength: 255 },
+                  apiKeyName: {
+                    type: "string",
+                    minLength: 1,
+                    maxLength: 100,
+                    description: "Label for the first API key (default: Default Key)",
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Account created with Starter plan assignment and first API key",
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/AccountProvisioning" } },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "404": {
+            description: "Account provisioning is not enabled (OPERATOR_TOKEN unset) or resource missing",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } },
+          },
+          "409": { $ref: "#/components/responses/Conflict" },
+          "429": { $ref: "#/components/responses/TooManyRequests" },
+          "500": { $ref: "#/components/responses/InternalError" },
+        },
+      },
+    },
     "/health/live": {
       get: {
         tags: ["Health"],
@@ -406,6 +548,41 @@ export const openApiSpec = {
           },
           "400": { $ref: "#/components/responses/BadRequest" },
           "401": { $ref: "#/components/responses/Unauthorized" },
+          "429": { $ref: "#/components/responses/TooManyRequests" },
+        },
+      },
+    },
+    "/usage/summary": {
+      get: {
+        tags: ["Usage"],
+        summary: "Consumed/remaining summary for one UTC month",
+        description:
+          "Aggregated from the authoritative usage counters (never by summing the request log). Defaults to the current UTC month; pass periodStart=YYYY-MM for a historical month. Future periods are 400. Rejected requests never appear in consumed. Historical consumed stays available after plan changes; monthlyAllowance and remaining always reflect the currently effective plan (remaining clamps at 0, like POST /usage).",
+        parameters: [
+          {
+            name: "periodStart",
+            in: "query",
+            description: "UTC month as YYYY-MM (or YYYY-MM-01); defaults to the current month; future months are rejected",
+            schema: { type: "string", pattern: "^\\d{4}-\\d{2}(-01)?$" },
+          },
+          {
+            name: "userId",
+            in: "query",
+            description:
+              "Optional clientUserId filter, resolved within the authenticated account; unknown users are 404. Restricts the users array to that user (the account block is always present).",
+            schema: { type: "string", minLength: 1, maxLength: 255 },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Summary for the requested period",
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/UsageSummary" } },
+            },
+          },
+          "400": { $ref: "#/components/responses/BadRequest" },
+          "401": { $ref: "#/components/responses/Unauthorized" },
+          "404": { $ref: "#/components/responses/NotFound" },
           "429": { $ref: "#/components/responses/TooManyRequests" },
         },
       },

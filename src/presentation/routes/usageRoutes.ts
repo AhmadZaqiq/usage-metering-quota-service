@@ -1,8 +1,9 @@
 import { Router, Response, Request } from "express";
 import { processUsageRequest } from "../../application/usage/usageService.js";
 import { getUsageHistory } from "../../application/usage/usageHistoryService.js";
+import { getUsageSummary, parsePeriodStart } from "../../application/usage/usageSummaryService.js";
 import { asyncHandler } from "../middleware/asyncHandler.js";
-import { usageRequestSchema, usageHistorySchema } from "../../validation/schemas.js";
+import { usageRequestSchema, usageHistorySchema, usageSummarySchema } from "../../validation/schemas.js";
 import { AuthenticatedRequest } from "../middleware/authMiddleware.js";
 import { ValidationError } from "../../errors/AppError.js";
 
@@ -38,6 +39,22 @@ router.post(
     }
 
     return res.json(response);
+  })
+);
+
+router.get(
+  "/summary",
+  asyncHandler(async (req: Request, res: Response) => {
+    const authReq = req as AuthenticatedRequest;
+    const parsed = usageSummarySchema.safeParse(req.query);
+    if (!parsed.success) {
+      throw new ValidationError("Invalid query parameters", parsed.error.flatten().fieldErrors);
+    }
+
+    const periodStart = parsePeriodStart(parsed.data.periodStart);
+    const summary = await getUsageSummary(authReq.account.id, periodStart, parsed.data.userId);
+
+    return res.json(summary);
   })
 );
 

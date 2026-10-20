@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { ZodError } from 'zod';
-import { pgErrorCode } from '../domain/pgError.js';
+import { pgErrorCode, unwrapQueryError } from '../domain/pgError.js';
 import { AppError } from './AppError.js';
 import { logger } from '../logging/logger.js';
 
@@ -82,8 +82,9 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
     });
   }
 
-  if (err && typeof err === 'object' && 'code' in err && pgErrorCode(err.code as string)) {
-    const pgErr = err as { code: string; message: string; constraint?: string };
+  const dbErr = err && typeof err === 'object' ? unwrapQueryError(err) : err;
+  if (dbErr && typeof dbErr === 'object' && 'code' in dbErr && pgErrorCode((dbErr as { code?: string }).code as string)) {
+    const pgErr = dbErr as { code: string; message: string; constraint?: string };
     logger.error(
       { err, requestId, pgCode: pgErr.code, constraint: pgErr.constraint },
       'Database error'

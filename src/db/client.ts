@@ -3,6 +3,7 @@ import { Pool, PoolConfig } from "pg";
 import * as schema from "./schema/index.js";
 import { getEnv } from "../config/index.js";
 import { logger } from "../logging/logger.js";
+import { unwrapQueryError } from "../domain/pgError.js";
 
 const env = getEnv();
 
@@ -52,7 +53,10 @@ export async function withTransaction<T>(
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       return await db.transaction(fn);
-    } catch (err) {
+    } catch (caught) {
+      // drizzle >= 0.44 wraps query errors; unwrap so retry detection and
+      // downstream callers see the original SQLSTATE-bearing driver error.
+      const err = unwrapQueryError(caught);
       lastError = err as Error;
       const pgCode = (err as { code?: string }).code;
 

@@ -12,6 +12,7 @@ import {
   insertAssignment,
 } from '../../infrastructure/repositories/assignmentRepository.js';
 import type { PlanAssignmentRow } from '../../infrastructure/repositories/assignmentRepository.js';
+import { unwrapQueryError } from '../../domain/pgError.js';
 import {
   NotFoundError,
   AuthorizationError,
@@ -47,7 +48,7 @@ export async function createAssignment(
     try {
       return await createAssignmentImpl(tx, accountId, input, requestingAccountId);
     } catch (err) {
-      const pgCode = (err as { code?: string }).code;
+      const pgCode = (unwrapQueryError(err) as { code?: string }).code;
       if (pgCode === '23P01' || pgCode === '23505') {
         // no_overlapping_assignments exclusion constraint or
         // uq_current_account_assignment unique index violated
