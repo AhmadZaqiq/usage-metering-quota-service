@@ -47,3 +47,6 @@ coverage/
 keys.env
 fixtures-output.json
 baseline-test-suite.log
+
+# Local agent instructions: kept on disk, deliberately not part of the repo.
+/AGENTS.md

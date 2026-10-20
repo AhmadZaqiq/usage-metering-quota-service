@@ -7,6 +7,8 @@ Interactive documentation: `GET /docs` (Swagger UI). Machine-readable spec: `GET
 All protected endpoints require `Authorization: Bearer <api_key>` header.
 API key format: `<prefix>.<secret>` (prefix stored plain, secret hashed with SHA-256)
 
+The single exception is `POST /accounts`, which requires the shared **operator token** instead: `Authorization: Bearer <OPERATOR_TOKEN>`.
+
 ## Endpoints
 
 ### Health
@@ -63,12 +65,79 @@ Plan changes follow an **immediate** model: the new assignment takes effect on t
 | `POST` | `/users` | Yes | Create user (external client_user_id) |
 | `GET` | `/users` | Yes | List users in account |
 
+### Account Provisioning
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/accounts` | Operator token | Create account + Starter assignment + first API key atomically |
+
+Requires the shared `OPERATOR_TOKEN` environment variable as a bearer credential — **never a tenant API key**. When the variable is unset the endpoint is disabled and returns `404` (it does not advertise a public stub). The comparison is constant-time (both sides SHA-256-hashed before `timingSafeEqual`). The plaintext key appears only in this response; only its hash is stored.
+
+```json
+POST /accounts
+Authorization: Bearer <OPERATOR_TOKEN>
+Content-Type: application/json
+
+{
+  "name": "Globex Corp",
+  "apiKeyName": "Primary Key"        // optional, default "Default Key"
+}
+```
+
+```json
+201 Created
+{
+  "account": { "id": 7, "name": "Globex Corp", "createdAt": "2026-10-20T14:11:28.461Z" },
+  "apiKey": {
+    "id": 51,
+    "prefix": "c5b6653a2e5cb2bd",
+    "name": "Primary Key",
+    "key": "c5b6653a2e5cb2bd.<64-hex-secret>"
+  }
+}
+```
+
+Errors: `400` invalid body (name 1–255, apiKeyName 1–100), `401` missing/wrong operator token or any tenant key, `404` provisioning disabled (OPERATOR_TOKEN unset), `409` account name already exists (no partial rows — account, assignment, and key commit or roll back together).
+
 ### Usage
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | `POST` | `/usage` | Yes | Submit usage request |
 | `GET` | `/usage` | Yes | Usage decision history (paginated: `page`, `limit`; optional `userId` filter — `clientUserId` resolved in the authenticated account, `404` if unknown) |
+| `GET` | `/usage/summary` | Yes | Consumed/remaining summary for one UTC month (query: optional `periodStart` `YYYY-MM` or `YYYY-MM-01`, default current month; optional `userId` filter) |
+
+#### Usage summary
+
+`GET /usage/summary` aggregates from the **authoritative counters** (`usage_counters`), never by summing the decision log. Future periods are `400`. Historical `consumed` stays available after plan changes; `monthlyAllowance` and `remaining` always reflect the currently effective plan (remaining clamps at 0, like `POST /usage`). Users without an effective plan appear with `null` plan fields and `remaining` (a metered write for them would `409`).
+
+```json
+GET /usage/summary?periodStart=2026-09&userId=ana
+Authorization: Bearer <api_key>
+```
+
+```json
+200 OK
+{
+  "periodStart": "2026-09-01",
+  "account": {
+    "accountId": "7",
+    "planId": "41", "planName": "Starter",
+    "monthlyAllowance": "10000", "maxUnitsPerRequest": "100",
+    "consumed": "4321", "remaining": "5679"
+  },
+  "users": [
+    {
+      "userId": "12", "clientUserId": "ana", "isActive": true,
+      "planId": "43", "planName": "Premium",
+      "monthlyAllowance": "5000", "maxUnitsPerRequest": "200",
+      "consumed": "800", "remaining": "4200"
+    }
+  ]
+}
+```
+
+With `userId`, the `users` array contains only that user (the `account` block is always present); an unknown `userId` is `404`. All bigint fields are string-encoded.
 
 ## Usage Request
 

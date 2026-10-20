@@ -66,3 +66,30 @@ export async function incrementCounter(
     WHERE id = ${counterId}
   `);
 }
+export interface CounterSubjectRow {
+  userId: bigint | null;
+  counter: bigint;
+}
+
+/**
+ * All counter rows (account-level and every user-level) for one account and
+ * UTC period, in two rows-or-fewer queries' worth of data: the account row
+ * (user_id IS NULL) plus one row per active user counter. Missing rows mean
+ * zero consumption for that subject in the period.
+ */
+export async function selectCountersByAccountPeriod(
+  tx: Transaction,
+  accountId: bigint,
+  periodStart: string,
+): Promise<CounterSubjectRow[]> {
+  const result = await tx.execute(sql`
+    SELECT user_id as "userId", counter
+    FROM usage_counters
+    WHERE account_id = ${accountId} AND period_start = ${periodStart}
+  `);
+
+  return result.rows.map((row) => ({
+    userId: row.userId !== null && row.userId !== undefined ? BigInt(row.userId as string) : null,
+    counter: BigInt(row.counter as string),
+  }));
+}

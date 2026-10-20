@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { getTestPool, getTestDb } from "./setup.js";
 import { accounts, users } from "../db/schema/index.js";
 import { softDeletePlan, insertPlan } from "../infrastructure/repositories/planRepository.js";
+import { unwrapQueryError } from "../domain/pgError.js";
 
 // Direct-SQL tests for database constraints. These deliberately bypass all
 // application pre-validation to prove the database itself enforces the
@@ -54,8 +55,9 @@ function expectPgError(fn: () => Promise<unknown>, code: string) {
     () => {
       throw new Error(`expected PostgreSQL error ${code}, but statement succeeded`);
     },
-    (err: { code?: string }) => {
-      expect(err.code).toBe(code);
+    (err: unknown) => {
+      // drizzle >= 0.44 wraps driver errors; the SQLSTATE lives on the cause.
+      expect((unwrapQueryError(err) as { code?: string }).code).toBe(code);
     }
   );
 }

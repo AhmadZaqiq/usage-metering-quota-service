@@ -29,6 +29,8 @@ curl -s http://localhost:3000/health/ready
 
 On the very first start the key is also printed to the logs (`docker compose logs app | grep "BOOTSTRAP API KEY"`). It is shown once; later restarts reuse the stored key.
 
+To provision further accounts over HTTP, set `OPERATOR_TOKEN` (16+ characters, see [`.env.example`](.env.example)) and call `POST /accounts` with it — the endpoint is disabled (404) while the variable is unset. Details: [docs/API.md — Account Provisioning](docs/API.md#account-provisioning).
+
 Run the example client — a scripted walkthrough of the whole lifecycle:
 
 ```bash
@@ -54,6 +56,8 @@ Without Docker: `npm install`, set `DATABASE_URL` in `.env` (see [`.env.example`
 - **Account and user quotas evaluated as one decision.** `POST /usage` accepts only if the global per-request limit, both plans' per-request caps, the account's remaining allowance, and the user's remaining allowance all permit it. The response names exactly which rule bound: `account_quota_exceeded`, `user_quota_exceeded`, or `max_per_request_exceeded` with `limitScope` (`global` / `account` / `user`).
 - **Configurable plans.** Four seeded system plans (Starter, Pro, Basic, Premium — values below) are read-only for every tenant; each account manages its own custom plans via `POST` / `PATCH` / `DELETE /plans`. Assignments (`/assignments`) carry full history with effective dates, and a change applies immediately to the next request.
 - **API-key authentication and account isolation.** Keys are `<prefix>.<secret>` with the secret stored as a SHA-256 hash; tenant identity is derived only from the key — client-supplied account IDs are never trusted. Composite foreign keys keep `(account_id, user_id)` pairs valid at the database level.
+- **Operator-gated account provisioning.** `POST /accounts` creates an account, its Starter assignment, and its first API key atomically in one transaction; the plaintext key is returned exactly once. It authenticates with a shared `OPERATOR_TOKEN` environment variable (never a tenant API key) and is disabled — `404`, not a public stub — when the variable is unset.
+- **Consumed/remaining visibility.** `GET /usage/summary` reports exact consumed units from the authoritative counters for any UTC month, plus allowance and remaining under the currently effective plans, for the account and each user. Rejected requests never appear in `consumed`; remaining clamps at 0 like `POST /usage`.
 - **Full decision record.** Every request — accepted or rejected — is persisted with decision, reason, units, month, and resulting remainings. Rejected requests consume no quota but stay queryable as an audit trail.
 - **Idempotent retries.** Resending the same `requestId` with the same payload replays the original committed response without consuming again; the same key with a different payload is `409 Conflict`.
 - **Concurrency-safe accounting.** Counter rows are updated under row locks in a fixed order within one transaction; deadlock and serialization failures retry with backoff; PostgreSQL constraints re-enforce the same invariants if application logic is ever wrong.
@@ -228,6 +232,7 @@ What the service assumes, and what callers may rely on:
 ```bash
 docker compose up -d postgres-test    # test database used by the suite
 npm run verify                        # typecheck + lint + build + full test suite
+docker compose --profile tests run --rm tests   # same suite, fully containerized
 
 # Counter accounting vs the decision log (INV-1…INV-8, whole database):
 docker compose run --rm app node dist/scripts/verify-invariants.js
@@ -239,7 +244,8 @@ npm run loadtest -- --duplicate-every 5 --duration 30         # idempotent repla
 npm run loadtest -- --near-quota --headroom 50 --duration 30  # sustained rejections at the limit
 ```
 
-- Tests run against **real PostgreSQL** — no database mocks: pure-domain unit tests, HTTP integration through the full Express pipeline, concurrency races, month boundaries, plan-change effects, hot-path equivalence, and direct-SQL constraint proofs. Latest verified run: **25 files, 244 tests, all passing**.
+- Tests run against **real PostgreSQL** — no database mocks: pure-domain unit tests, HTTP integration through the full Express pipeline, concurrency races, month boundaries, plan-change effects, hot-path equivalence, account-provisioning auth, usage-summary accounting, and direct-SQL constraint proofs. Latest verified run: **27 files, 265 tests, all passing**.
+- When something looks stuck: `docker compose ps` for container health and `docker compose logs postgres app` for recent errors. `docker compose down -v` **permanently deletes all local data** (named volumes `pgdata`, `pgdata_test`, `bootstrap-secrets`, including the bootstrap API key) — never use it to make tests pass.
 
 ### Benchmark: baseline vs. optimized request path
 
@@ -269,4 +275,4 @@ Same workload, same machine, same stack — only the request-path optimization i
 - **A single hot account is serialized** — the no-overspend design caps one account at the measured ~120–130 req/s on this machine after the request-path optimization; scaling one tenant further requires counter sharding, deliberately out of scope.
 - **`usage_requests` grows without bound** — no retention or archival job for idempotency keys and history yet.
 - **No distributed tracing or metrics** — structured logs with request IDs only.
-- **Not independently audited** — security controls are implemented and tested but unreviewed by a third party; `drizzle-orm` 0.33 carries advisory GHSA-gpj5-g38j-94v9 (identifier escaping — a pattern this codebase does not use), with the upgrade to 0.45.x scheduled as maintenance.
+- **Not independently audited** — security controls are implemented and tested but unreviewed by a third party. `drizzle-orm` was upgraded from 0.33 to 0.45.4, resolving advisory GHSA-gpj5-g38j-94v9 (identifier escaping); `npm audit --omit=dev` reports zero production vulnerabilities.

@@ -30,6 +30,9 @@ export function setTestEnv() {
   process.env.DATABASE_URL = TEST_DB_URL;
   process.env.NODE_ENV = "test";
   process.env.LOG_LEVEL = "warn";
+  // Operator credential for POST /accounts tests (getEnv() caches on first
+  // access, so it must be set here with the other bootstrap env vars).
+  process.env.OPERATOR_TOKEN = process.env.OPERATOR_TOKEN || "test-operator-token-audit";
 }
 
 export function getTestDb(): NodePgDatabase<typeof schema> {

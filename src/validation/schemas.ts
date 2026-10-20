@@ -62,6 +62,19 @@ export const createUserSchema = z.object({
   clientUserId: z.string().min(1).max(255),
 });
 
+export const createAccountSchema = z.object({
+  name: z.string().min(1).max(255),
+  apiKeyName: z.string().min(1).max(100).optional(),
+});
+
+export const usageSummarySchema = z.object({
+  periodStart: z
+    .string()
+    .regex(/^\d{4}-\d{2}(-01)?$/, "Must be YYYY-MM or YYYY-MM-01")
+    .optional(),
+  userId: z.string().min(1).max(255).optional(),
+});
+
 export const idParamSchema = z.object({
   id: z.string().regex(/^\d+$/).transform((v) => parseInt(v, 10)),
 });

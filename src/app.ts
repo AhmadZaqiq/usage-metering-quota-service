@@ -15,8 +15,10 @@ import apiKeyRoutes from "./presentation/routes/apiKeyRoutes.js";
 import planRoutes from "./presentation/routes/planRoutes.js";
 import assignmentRoutes from "./presentation/routes/assignmentRoutes.js";
 import userRoutes from "./presentation/routes/userRoutes.js";
+import accountRoutes from "./presentation/routes/accountRoutes.js";
 import healthRoutes from "./presentation/routes/healthRoutes.js";
 import docsRoutes from "./presentation/routes/docsRoutes.js";
+import { operatorAuthMiddleware } from "./presentation/middleware/operatorAuthMiddleware.js";
 
 declare module "express" {
   interface Request {
@@ -89,6 +91,9 @@ export function createApp(): express.Application {
   app.use("/plans", ...authenticated, planRoutes);
   app.use("/assignments", ...authenticated, assignmentRoutes);
   app.use("/users", ...authenticated, userRoutes);
+  // Operator-gated provisioning: shared OPERATOR_TOKEN from the environment,
+  // never a tenant API key. Disabled (404) when the token is not configured.
+  app.use("/accounts", asyncHandler(operatorAuthMiddleware), accountRoutes);
 
   app.use((_req: Request, _res: Response, next: NextFunction) => {
     next(new NotFoundError());

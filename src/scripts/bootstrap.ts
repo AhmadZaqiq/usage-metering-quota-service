@@ -17,6 +17,7 @@ import { createAssignment } from "../application/plans/assignmentService.js";
 import { getEnv } from "../config/index.js";
 import { logger } from "../logging/logger.js";
 import { getUtcMonthStart } from "../domain/date.js";
+import { unwrapQueryError } from "../domain/pgError.js";
 import * as fs from "fs";
 import { db } from "../db/client.js";
 
@@ -49,7 +50,7 @@ async function ensureSystemPlans(): Promise<void> {
     } catch (err) {
       // uq_system_plans: a concurrent bootstrap inserted the same (type, name)
       // first; the seeded catalog is identical either way.
-      const pgErr = err as { code?: string };
+      const pgErr = unwrapQueryError(err) as { code?: string };
       if (pgErr.code !== "23505") throw err;
       logger.info({ plan: plan.name }, "System plan seeded concurrently; reusing");
     }
@@ -109,7 +110,7 @@ export async function bootstrap(): Promise<void> {
       logger.info({ accountId: accountId.toString() }, "Bootstrap account created");
     } catch (err) {
       // uq_accounts_name: a concurrent bootstrap inserted the same name first.
-      const pgErr = err as { code?: string };
+      const pgErr = unwrapQueryError(err) as { code?: string };
       if (pgErr.code !== "23505") throw err;
       const raced = await selectAccountByName(db, bootstrapAccountName);
       if (!raced) throw err;

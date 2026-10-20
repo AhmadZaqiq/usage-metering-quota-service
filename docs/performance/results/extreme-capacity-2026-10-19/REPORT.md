@@ -5,7 +5,7 @@
 **Environment:** isolated Docker Compose project `um-extreme` on a local WSL2 host
 **Status:** Campaign completed; the isolated stack was torn down and its volumes retained. The development stack and development database were not modified.
 
-> **Archive note:** the raw autocannon output (`raw/`) and campaign snapshots (`snapshots/`) referenced throughout this report were archived to [Release `perf-2026-10-19`](https://github.com/AhmadZaqiq/usage-metering-quota-service/releases/tag/perf-2026-10-19); filenames below are as recorded. Integrity: [`ARCHIVE-MANIFEST.sha256`](../../ARCHIVE-MANIFEST.sha256); index: [`docs/performance/README.md`](../../README.md).
+> **Archive note:** the raw autocannon output (`raw/`) and campaign snapshots (`snapshots/`) referenced throughout this report were archived to [Release `perf-2026-10-19`](https://github.com/AhmadZaqiq/usage-metering-quota-service/releases/tag/perf-2026-10-19); filenames below are as recorded. Integrity: the release tarball's SHA-256 is listed in [`docs/performance/README.md`](../../README.md), which is also the index for this evidence.
 
 ---
 
@@ -465,7 +465,6 @@ Keys in `snapshots/keys.env` and `snapshots/fixtures-output.json` are disposable
 | Path | Contents |
 |---|---|
 | `REPORT.md` | This report |
-| `summary.json` | Machine-readable campaign summary |
 | `docker-compose.campaign.yml` | Isolated campaign stack |
 | `scripts/run-stage.mjs` | Single-target autocannon harness |
 | `scripts/run-multi.mjs` | Multi-account parallel harness |
