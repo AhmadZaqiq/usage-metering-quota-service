@@ -109,6 +109,80 @@ export async function selectPlanByCriteriaForUpdate(
   };
 }
 
+export interface CurrentPlanQuotaRow {
+  assignmentId: bigint;
+  planId: bigint;
+  monthlyAllowance: bigint;
+  maxUnitsPerRequest: bigint;
+}
+
+/**
+ * Resolve the account-scoped current assignment together with its plan quota
+ * in one statement, for the usage hot path. The assignment-window predicates
+ * are identical to selectCurrentAssignmentByAccount; the JOIN applies the
+ * same active / not-deleted plan filter as selectPlanByCriteria. "No row"
+ * covers both no-assignment and unusable-plan — the usage path fails closed
+ * (409) on either, so the collapsed outcome is behaviour-preserving.
+ */
+export async function selectCurrentPlanQuotaByAccount(
+  tx: Transaction,
+  accountId: bigint,
+  at: Date = new Date(),
+): Promise<CurrentPlanQuotaRow | null> {
+  const result = await tx.execute(sql`
+    SELECT pa.id AS "assignmentId",
+           p.id AS "planId",
+           p.monthly_allowance AS "monthlyAllowance",
+           p.max_units_per_request AS "maxUnitsPerRequest"
+    FROM plan_assignments pa
+    JOIN plans p ON p.id = pa.plan_id AND p.is_active AND p.deleted_at IS NULL
+    WHERE pa.account_id = ${accountId} AND pa.user_id IS NULL
+      AND pa.effective_from <= ${at}
+      AND (pa.effective_to IS NULL OR pa.effective_to > ${at})
+    ORDER BY pa.effective_from DESC
+    LIMIT 1
+  `);
+  if (result.rows.length === 0) return null;
+  return {
+    assignmentId: BigInt(result.rows[0].assignmentId as string),
+    planId: BigInt(result.rows[0].planId as string),
+    monthlyAllowance: BigInt(result.rows[0].monthlyAllowance as string),
+    maxUnitsPerRequest: BigInt(result.rows[0].maxUnitsPerRequest as string),
+  };
+}
+
+/**
+ * User-scoped twin of selectCurrentPlanQuotaByAccount for the usage hot path;
+ * same predicates as selectCurrentAssignmentByUser plus the plan filter from
+ * selectPlanByCriteria, in a single statement.
+ */
+export async function selectCurrentPlanQuotaByUser(
+  tx: Transaction,
+  userId: bigint,
+  at: Date = new Date(),
+): Promise<CurrentPlanQuotaRow | null> {
+  const result = await tx.execute(sql`
+    SELECT pa.id AS "assignmentId",
+           p.id AS "planId",
+           p.monthly_allowance AS "monthlyAllowance",
+           p.max_units_per_request AS "maxUnitsPerRequest"
+    FROM plan_assignments pa
+    JOIN plans p ON p.id = pa.plan_id AND p.is_active AND p.deleted_at IS NULL
+    WHERE pa.user_id = ${userId}
+      AND pa.effective_from <= ${at}
+      AND (pa.effective_to IS NULL OR pa.effective_to > ${at})
+    ORDER BY pa.effective_from DESC
+    LIMIT 1
+  `);
+  if (result.rows.length === 0) return null;
+  return {
+    assignmentId: BigInt(result.rows[0].assignmentId as string),
+    planId: BigInt(result.rows[0].planId as string),
+    monthlyAllowance: BigInt(result.rows[0].monthlyAllowance as string),
+    maxUnitsPerRequest: BigInt(result.rows[0].maxUnitsPerRequest as string),
+  };
+}
+
 export async function selectCurrentAssignmentByAccount(
   tx: Transaction,
   accountId: bigint,

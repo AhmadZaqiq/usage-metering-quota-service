@@ -1,5 +1,5 @@
 import type { Transaction } from "../../db/client.js";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { apiKeys, accounts } from "../../db/schema/index.js";
 
 export interface ApiKeyRow {
@@ -151,13 +151,24 @@ export async function findApiKeyByPrefix(
   };
 }
 
+/**
+ * Minimum age of the stored stamp before a new one is written. The stamp is
+ * advisory telemetry shown on the key list, so under sustained load the
+ * UPDATE usually matches nothing and skips a tuple write + WAL record on the
+ * serialized usage path; the first use (NULL stamp) always writes.
+ */
+export const LAST_USED_MIN_INTERVAL_S = 10;
+
 export async function updateApiKeyLastUsedAt(
   tx: Transaction,
   keyId: bigint,
 ): Promise<void> {
-  await tx
-    .update(apiKeys)
-    .set({ lastUsedAt: new Date() })
-    .where(eq(apiKeys.id, keyId))
-    .execute();
+  // now() is the transaction clock: stable within the transaction, no
+  // client/server clock mixing in the comparison.
+  await tx.execute(sql`
+    UPDATE api_keys
+    SET last_used_at = ${new Date()}
+    WHERE id = ${keyId}
+      AND (last_used_at IS NULL OR last_used_at < now() - make_interval(secs => ${LAST_USED_MIN_INTERVAL_S}))
+  `);
 }

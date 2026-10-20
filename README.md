@@ -239,25 +239,34 @@ npm run loadtest -- --duplicate-every 5 --duration 30         # idempotent repla
 npm run loadtest -- --near-quota --headroom 50 --duration 30  # sustained rejections at the limit
 ```
 
-- Tests run against **real PostgreSQL** — no database mocks: pure-domain unit tests, HTTP integration through the full Express pipeline, concurrency races, month boundaries, plan-change effects, and direct-SQL constraint proofs. Latest verified run: **24 files, 239 tests, all passing**.
+- Tests run against **real PostgreSQL** — no database mocks: pure-domain unit tests, HTTP integration through the full Express pipeline, concurrency races, month boundaries, plan-change effects, hot-path equivalence, and direct-SQL constraint proofs. Latest verified run: **25 files, 244 tests, all passing**.
 
-### Benchmark: baseline vs. after
+### Benchmark: baseline vs. optimized request path
 
-| Metric | Baseline (2026-10-19) | After (2026-10-20) |
-|--------|----------------------|--------------------|
-| Throughput, one hot account | 120.44 req/s | 101.10 and 114.37 req/s (two warm repeats) |
-| Latency p50 / p90 / p99 | 79 / 96 / 146 ms | 82–93 / 100–118 / 166–189 ms |
+Same workload, same machine, same stack — only the request-path optimization in between. Three warm 30 s runs each, no cherry-picking:
+
+| Metric | Baseline | After optimization |
+|--------|---------:|-------------------:|
+| Throughput (mean of 3 runs) | 118.2 req/s (112.6 / 121.0 / 121.1) | **125.6 req/s (124.3 / 128.6 / 123.7)** |
+| Latency p50 (per-run) | 85 / 80 / 80 ms | 77 / 75 / 76 ms |
+| Latency p90 (per-run) | 97 / 88 / 88 ms | 90 / 84 / 86 ms |
+| Latency p99 (per-run) | 175 / 141 / 116 ms | 124 / 110 / 166 ms |
 | Errors / timeouts / non-2xx | 0 / 0 / 0 | 0 / 0 / 0 |
-| Two accounts in parallel | not measured | **162 req/s combined** (81 + 81), 0 errors |
+| Accepted / rejected (measured runs) | 10,641 / 0 | 11,299 / 0 |
 
-**Methodology (identical on both sides):** Docker Compose stack on one 12-core WSL2 dev machine; account-scoped `POST /usage`, `units=1`, unique idempotency key per request, pipelining 1, 30 s × 10 connections, 5 s warm-up discarded, rate limit raised only for the measurement window and restored afterwards; afterwards the account counter and every row were cross-checked against the decision log (0 mismatches).
+**Workload:** account-scoped `POST /usage`, `units=1`, unique idempotency key per request, pipelining 1, 10 connections, 5 s warm-up discarded, `RATE_LIMIT_MAX` raised only for the window and restored afterwards, Docker Compose stack on one 12-core WSL2 dev machine. Before/after accepted deltas matched the account counter exactly and `verify-invariants.js` (INV-1…INV-8) passed after every run.
 
-**How to read it:** no server code changed between the two measurements — the diff is tests and load-test tooling — so the spread is run-to-run variance on a shared dev machine (the first run after a rebuild runs ~15% slower; discard it). The plateau is connection-latency-bound on purpose: every accepted request holds the account's counter row lock through commit (~5.5 ms of database time, ~3–4 ms of it the fsync), which caps a single hot account near 100–120 req/s while two accounts reach 162 req/s — the lock is per account, not global. Full series, logging-isolation runs, direct SQL timings, and the optimization options measured and rejected (`synchronous_commit=off` for durability, lock redesign for correctness): [`docs/performance/2026-10-20-loadtest-workloads.md`](docs/performance/2026-10-20-loadtest-workloads.md). Initial baseline: [`docs/performance/2026-10-19-baseline.md`](docs/performance/2026-10-19-baseline.md). These are single-machine measurements, **not** a production capacity claim.
+**What changed (two small edits, same correctness model):**
+
+1. **Fused assignment + plan resolution** — the usage hot path resolved the current assignment and then loaded its plan as two queries per scope; it is now one join per scope with identical predicates and filters (including fail-closed 409 when the assigned plan is unusable). A user-scoped transaction drops from 14 to 12 statements, each removed statement saving a round trip *and* a parse/plan inside the serialized section.
+2. **Throttled API-key last-used stamp** — the advisory `last_used_at` telemetry column is now written at most once per 10 s per key (first use always stamps), skipping a tuple write + WAL record per request on the hot path.
+
+**How to read it:** the optimized runs (124–129 req/s) sit above every baseline run (113–121); p50 improved 80–85 → 75–77 ms with no tail regression beyond run-to-run noise. The remaining plateau is connection-latency-bound on purpose: every accepted request still holds the account's counter row lock through a durable commit, which is the no-overspend design — two accounts in parallel were measured at 162 req/s combined, so the lock is per account, not global. Options measured and rejected: `synchronous_commit=off` (durability), folding the admission clock into the lock statement (documented correctness risk), multi-row counter increment (weakens fixed lock order). Full evidence: [`docs/performance/2026-10-20-request-path-optimization.md`](docs/performance/2026-10-20-request-path-optimization.md); workload/bottleneck analysis: [`docs/performance/2026-10-20-loadtest-workloads.md`](docs/performance/2026-10-20-loadtest-workloads.md); initial single-run baseline: [`docs/performance/2026-10-19-baseline.md`](docs/performance/2026-10-19-baseline.md). Single-machine measurements, **not** a production capacity claim.
 
 ## Limitations
 
 - **Rate limiting is per process** — counters live in a bounded in-process store: they reset on restart and are not shared between replicas; multi-replica deployments need their own shared store.
-- **A single hot account is serialized** — the no-overspend design caps one account at the measured ~100–120 req/s on this machine; scaling one tenant further requires counter sharding, deliberately out of scope.
+- **A single hot account is serialized** — the no-overspend design caps one account at the measured ~120–130 req/s on this machine after the request-path optimization; scaling one tenant further requires counter sharding, deliberately out of scope.
 - **`usage_requests` grows without bound** — no retention or archival job for idempotency keys and history yet.
 - **No distributed tracing or metrics** — structured logs with request IDs only.
 - **Not independently audited** — security controls are implemented and tested but unreviewed by a third party; `drizzle-orm` 0.33 carries advisory GHSA-gpj5-g38j-94v9 (identifier escaping — a pattern this codebase does not use), with the upgrade to 0.45.x scheduled as maintenance.
