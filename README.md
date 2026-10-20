@@ -9,8 +9,6 @@ A backend service that answers one question for every API call: **may this reque
 
 Both limits matter together: the account quota bounds total spend, while user quotas provide fairness and blast-radius control inside the company. A usage request must pass **both** — either level failing rejects the request and consumes nothing.
 
-> Portfolio project: demonstrates backend engineering practices with tests and measured evidence; see [Limitations](#limitations) for what has not been independently verified.
-
 ## Quick Start
 
 Prerequisites: Docker + Docker Compose.
@@ -49,7 +47,16 @@ docker compose run -i --rm client node dist/cli/index.js simulate
 
 Expected: a readiness check, idempotent setup of the fictional *Acme Corp* tenant (plans, users, assignments), then a numbered menu — dashboard, users & balances, consume, plans, assignments, paginated history — including `11) Guided scenarios (12)`. Every action is re-read from the service; `0` exits cleanly.
 
-Without Docker: `npm install`, set `DATABASE_URL` in `.env` (see [`.env.example`](.env.example)), then `npm run db:migrate && npm run dev`.
+Without Docker: `npm install`, then make the environment variables available in your shell before running anything — the app reads `process.env` directly and does **not** load `.env` automatically (Docker Compose reads `.env` for `${...}` interpolation; plain Node/tsx commands do not):
+
+```bash
+npm install
+cp .env.example .env            # optional starting point
+set -a; . ./.env; set +a        # export every variable in .env into this shell
+npm run db:migrate && npm run dev
+```
+
+Or set the variable directly: `export DATABASE_URL=postgresql://app:app_secret@localhost:5432/usage_metering`.
 
 ## Key Features
 
@@ -57,8 +64,8 @@ Without Docker: `npm install`, set `DATABASE_URL` in `.env` (see [`.env.example`
 - **Configurable plans.** Four seeded system plans (Starter, Pro, Basic, Premium — values below) are read-only for every tenant; each account manages its own custom plans via `POST` / `PATCH` / `DELETE /plans`. Assignments (`/assignments`) carry full history with effective dates, and a change applies immediately to the next request.
 - **API-key authentication and account isolation.** Keys are `<prefix>.<secret>` with the secret stored as a SHA-256 hash; tenant identity is derived only from the key — client-supplied account IDs are never trusted. Composite foreign keys keep `(account_id, user_id)` pairs valid at the database level.
 - **Operator-gated account provisioning.** `POST /accounts` creates an account, its Starter assignment, and its first API key atomically in one transaction; the plaintext key is returned exactly once. It authenticates with a shared `OPERATOR_TOKEN` environment variable (never a tenant API key) and is disabled — `404`, not a public stub — when the variable is unset.
-- **Consumed/remaining visibility.** `GET /usage/summary` reports exact consumed units from the authoritative counters for any UTC month, plus allowance and remaining under the currently effective plans, for the account and each user. Rejected requests never appear in `consumed`; remaining clamps at 0 like `POST /usage`.
-- **Full decision record.** Every request — accepted or rejected — is persisted with decision, reason, units, month, and resulting remainings. Rejected requests consume no quota but stay queryable as an audit trail.
+- **Consumed/remaining visibility.** `GET /usage/summary` reports exact consumed units from the authoritative counters for any past or current UTC month (future periods are rejected with `400`), plus allowance and remaining under the currently effective plans, for the account and each user. Rejected requests never appear in `consumed`; remaining clamps at 0 like `POST /usage`.
+- **Full decision record.** Every request — accepted or rejected — is persisted with decision, reason, units, month, and resulting remainings; rejected requests stay queryable as an audit trail.
 - **Idempotent retries.** Resending the same `requestId` with the same payload replays the original committed response without consuming again; the same key with a different payload is `409 Conflict`.
 - **Concurrency-safe accounting.** Counter rows are updated under row locks in a fixed order within one transaction; deadlock and serialization failures retry with backoff; PostgreSQL constraints re-enforce the same invariants if application logic is ever wrong.
 - **Interactive company simulator.** The `simulate` command sets up a fictional tenant and provides a menu plus **12 guided scenarios** — quota accept/reject with `limitScope`, shared account pool, per-request caps, immediate plan changes, idempotent replay/conflict, validation and auth errors, usage history.
@@ -69,7 +76,7 @@ Without Docker: `npm install`, set `DATABASE_URL` in `.env` (see [`.env.example`
 A typical `POST /usage` request in five steps:
 
 1. **Authenticate** — `Authorization: Bearer <key>` resolves the account; rate limits are checked per IP, then per API key.
-2. **Validate** — Zod enforces `units` (string-encoded bigint, 1…`MAX_UNITS_PER_REQUEST`) and `requestId` (required, 1–255 chars); an unknown `userId` is `404`.
+2. **Validate** — Zod enforces `units` (string-encoded bigint, 1…`MAX_UNITS_PER_REQUEST`) and requires at least one idempotency key — `requestId` or its deprecated alias `idempotencyKey` (1–255 chars); an unknown `userId` is `404`.
 3. **Load context** — resolve the current plan assignments and this account's counters for the current **UTC month**. A known `requestId` short-circuits to a replay of its stored decision.
 4. **Lock and evaluate** — take counter row locks in a fixed order and run the pure quota evaluator: per-request caps → account remaining → user remaining. **Both account-level and user-level rules must pass; the first failing rule becomes the rejection reason.**
 5. **Persist and respond** — one transaction writes the decision row and, only if accepted, increments the counters, then returns `decision`, `accountRemaining`, optional `userRemaining`, and `periodStart`.
@@ -77,7 +84,7 @@ A typical `POST /usage` request in five steps:
 ```mermaid
 flowchart LR
     A["POST /usage"] --> B{"Auth + rate limit"}
-    B -->|"bad key"| E["401 / 403"]
+    B -->|"bad key"| E["401"]
     B --> C["Validate input"]
     C -->|"invalid"| E2["400 / 404"]
     C --> D{"requestId already stored?"}
@@ -206,12 +213,12 @@ Schema, invariants, and the concurrency matrix: [`docs/ARCHITECTURE.md`](docs/AR
 
 What the service assumes, and what callers may rely on:
 
-- **Accounts are provisioned by the operator only.** There is no public account-signup endpoint: an operator script (`npm run bootstrap`, run inside the stack) creates the account and its first API key. Tenant identity always derives from the authenticated key — a client-supplied account id is never trusted.
+- **Accounts are provisioned by the operator; there is no public signup.** `POST /accounts` requires `OPERATOR_TOKEN` and returns `404` when that setting is unset. The bootstrap workflow provisions the initial account and API key on startup — Docker Compose runs it automatically on first start, and it can be run on the host with `npm run bootstrap`. The full bootstrap key is shown exactly once (only its hash is stored; when `/run/secrets` exists it is also written there for the client container) and later restarts reuse it without re-printing. Tenant identity always derives from the authenticated key — a client-supplied account id is never trusted.
 - **`units` is a generic resource counter.** API calls, tokens, bytes, credits — the service counts integers and enforces limits; the caller defines what one unit means.
 - **Quota rejections are HTTP 200** with `decision: "rejected"`; HTTP status errors mean no usage decision was reached (400/401/403/404/409/429/5xx). Clients must branch on `decision`, not on status alone.
 - **Months are UTC calendar months**, stamped once per request at admission; counters, history, and remainings are all scoped to that period (`periodStart`).
 - **Plan changes are immediate and non-destructive** — the next request uses the new plan, counters are never reset, and lowering an allowance below this month's usage clamps remaining to `0`.
-- **Rejected requests are recorded and consume nothing.** They are queryable audit rows and participate in idempotent replay without ever moving a counter.
+- **Rejected requests are audit data, not errors.** They are persisted with their reason and remainings and replay idempotently like accepted rows.
 - **A user-scoped request with no effective user plan fails closed** (`409`), never silently falling back to account-only accounting.
 - **Idempotency keys are unique per account** (`requestId`, 1–255 chars): same key + identical payload replays the stored decision; same key + changed payload is `409 Conflict`.
 - **API keys are shown once.** Creation returns the full `<prefix>.<secret>` exactly once; only the prefix and a SHA-256 hash are stored afterwards.
@@ -222,7 +229,7 @@ What the service assumes, and what callers may rely on:
 - **The decision log is the idempotency store** — `usage_requests` holds a unique `(account_id, idempotency_key)` plus a hash of `{accountId, userId, units}`: same key + same hash replays the stored result, same key + different hash is `409`, with no second table that could drift out of sync.
 - **Row locks serialize consumption** — account and user counters are updated under locks held to commit in a fixed order (account → account counter → user counter → API key), trading per-account throughput for a hard no-overspend guarantee under concurrency.
 - **Plan changes are immediate and never reset counters** — the next request uses the new plan; remaining = new allowance − usage already consumed this month, clamped at `0` when an allowance is lowered below consumption.
-- **Rejections are recorded but free** — they get history rows for audit and idempotent replay while incrementing nothing.
+- **Rejections skip counter updates** — the same transaction writes the decision row and stops there; the counter-increment step never runs for a rejected request.
 - **Fail-closed missing plans** — a user-scoped request with no effective user plan is `409`, never a silent fallback to account-only accounting.
 - **Database constraints back the application logic** — composite tenant FKs, `CHECK (counter >= 0)`, and assignment-overlap `EXCLUDE` constraints keep invariants even if application code has a bug.
 - **Retries for transient transaction failures** — deadlock (`40P01`) and serialization (`40001`) failures retry up to 3× with exponential backoff, since explicit locking under contention can surface them.
@@ -237,12 +244,14 @@ docker compose --profile tests run --rm tests   # same suite, fully containerize
 # Counter accounting vs the decision log (INV-1…INV-8, whole database):
 docker compose run --rm app node dist/scripts/verify-invariants.js
 
-# Load-test modes (bootstrap the load-test account first, see docs/performance/):
+# Load-test modes (bootstrap the load-test account first — setup steps linked below):
 npm run loadtest -- --duration 30 --connections 10            # baseline shape
 npm run loadtest -- --users 10 --duration 30                  # many users sharing one account counter
 npm run loadtest -- --duplicate-every 5 --duration 30         # idempotent replays under load
 npm run loadtest -- --near-quota --headroom 50 --duration 30  # sustained rejections at the limit
 ```
+
+Load-test setup (raising `RATE_LIMIT_MAX` for the window, bootstrapping the load-test account, exporting `LOADTEST_API_KEY`): see the [Reproduction section of `2026-10-19-baseline.md`](docs/performance/2026-10-19-baseline.md#reproduction).
 
 - Tests run against **real PostgreSQL** — no database mocks: pure-domain unit tests, HTTP integration through the full Express pipeline, concurrency races, month boundaries, plan-change effects, hot-path equivalence, account-provisioning auth, usage-summary accounting, and direct-SQL constraint proofs. Latest verified run: **27 files, 265 tests, all passing**.
 - When something looks stuck: `docker compose ps` for container health and `docker compose logs postgres app` for recent errors. `docker compose down -v` **permanently deletes all local data** (named volumes `pgdata`, `pgdata_test`, `bootstrap-secrets`, including the bootstrap API key) — never use it to make tests pass.
