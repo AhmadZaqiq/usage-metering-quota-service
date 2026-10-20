@@ -11,70 +11,6 @@ Both limits matter together: the account quota bounds total spend, while user qu
 
 > Portfolio project: demonstrates backend engineering practices with tests and measured evidence; see [Limitations](#limitations) for what has not been independently verified.
 
-## Key Features
-
-- **Account and user quotas evaluated as one decision.** `POST /usage` accepts only if the global per-request limit, both plans' per-request caps, the account's remaining allowance, and the user's remaining allowance all permit it. The response names exactly which rule bound: `account_quota_exceeded`, `user_quota_exceeded`, or `max_per_request_exceeded` with `limitScope` (`global` / `account` / `user`).
-- **Configurable plans.** Four seeded system plans (Starter, Pro, Basic, Premium) are read-only for every tenant; each account manages its own custom plans via `POST` / `PATCH` / `DELETE /plans`. Assignments (`/assignments`) carry full history with effective dates, and a change applies immediately to the next request.
-- **API-key authentication and account isolation.** Keys are `<prefix>.<secret>` with the secret stored as a SHA-256 hash; tenant identity is derived only from the key — client-supplied account IDs are never trusted. Composite foreign keys keep `(account_id, user_id)` pairs valid at the database level.
-- **Full decision record.** Every request — accepted or rejected — is persisted with decision, reason, units, month, and resulting remainings. Rejected requests consume no quota but stay queryable as an audit trail.
-- **Idempotent retries.** Resending the same `requestId` with the same payload replays the original committed response without consuming again; the same key with a different payload is `409 Conflict`.
-- **Concurrency-safe accounting.** Counter rows are updated under row locks in a fixed order within one transaction; deadlock and serialization failures retry with backoff; PostgreSQL constraints re-enforce the same invariants if application logic is ever wrong.
-- **Interactive company simulator.** The `simulate` command sets up a fictional tenant and provides a menu plus **12 guided scenarios** — quota accept/reject with `limitScope`, shared account pool, per-request caps, immediate plan changes, idempotent replay/conflict, validation and auth errors, usage history.
-- **Operational surface.** `/health/live` and `/health/ready`, redacted structured logs, per-IP + per-key rate limiting (fail-closed), OpenAPI 3.1 with Swagger UI at `/docs`, and an invariant verifier (`npm run verify:invariants`) that cross-checks counters against the decision log.
-
-## How It Works
-
-A typical `POST /usage` request in five steps:
-
-1. **Authenticate** — `Authorization: Bearer <key>` resolves the account; rate limits are checked per IP, then per API key.
-2. **Validate** — Zod enforces `units` (string-encoded bigint, 1…`MAX_UNITS_PER_REQUEST`) and `requestId` (required, 1–255 chars); an unknown `userId` is `404`.
-3. **Load context** — resolve the current plan assignments and this account's counters for the current **UTC month**. A known `requestId` short-circuits to a replay of its stored decision.
-4. **Lock and evaluate** — take counter row locks in a fixed order and run the pure quota evaluator: per-request caps → account remaining → user remaining. **Both account-level and user-level rules must pass; the first failing rule becomes the rejection reason.**
-5. **Persist and respond** — one transaction writes the decision row and, only if accepted, increments the counters, then returns `decision`, `accountRemaining`, optional `userRemaining`, and `periodStart`.
-
-```mermaid
-flowchart LR
-    A["POST /usage"] --> B{"Auth + rate limit"}
-    B -->|"bad key"| E["401 / 403"]
-    B --> C["Validate input"]
-    C -->|"invalid"| E2["400 / 404"]
-    C --> D{"requestId already stored?"}
-    D -->|yes| R["Replay stored decision"]
-    D -->|no| F["Lock counters and evaluate"]
-    F --> G{"All rules pass?"}
-    G -->|yes| H["Accepted: write row,<br/>increment counters"]
-    G -->|no| I["Rejected: write row,<br/>counters untouched"]
-```
-
-**Business rejection vs. HTTP error.** A quota rejection is a *successful* API call: **HTTP 200** with `"decision": "rejected"` and a `rejectionReason` — the correct client reaction is to stop, upgrade, or shed load, not to retry. HTTP errors mean no usage decision was reached: `400` validation, `401` bad key, `403` forbidden (e.g. modifying a system plan), `404` unknown user, `409` idempotency conflict or missing plan, `429` rate limit, `5xx` infrastructure. **Rejected requests never consume quota**, and they are still written to history.
-
-## Architecture
-
-Request flow with one dependency direction; PostgreSQL is the source of truth:
-
-```text
-Presentation   routes, Zod validation, auth, rate limiting   (Express)
-     ↓
-Application    use cases, transaction and lock boundaries     (usage, plans, assignments, keys)
-     ↓
-Domain         pure rules: quota evaluator, idempotency,     (no framework or DB imports)
-               UTC month math
-     ↓
-Infrastructure Drizzle repositories, API-key verification,   (raw SQL where needed)
-               rate-limiter store
-     ↓
-PostgreSQL 16  row locks, unique / CHECK / EXCLUDE constraints, forward-only migrations
-```
-
-- **Presentation** handles HTTP only: routing, input schemas, authenticated context, status mapping.
-- **Application** owns workflows and the transaction boundaries where locks are taken.
-- **Domain** is pure TypeScript — the quota evaluator operates on bigints, so quota rules are unit-tested without Express or a database.
-- **Infrastructure** executes SQL; native `bigint` flows end to end and serializes to JSON as strings.
-
-**Stack:** TypeScript (strict) · Node.js · Express · PostgreSQL 16 · Drizzle ORM · Zod · Pino · Vitest + Supertest · Docker Compose · OpenAPI 3.1.
-
-Schema, invariants, and the concurrency matrix: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Endpoint contracts: [`docs/API.md`](docs/API.md).
-
 ## Quick Start
 
 Prerequisites: Docker + Docker Compose.
@@ -113,41 +49,168 @@ Expected: a readiness check, idempotent setup of the fictional *Acme Corp* tenan
 
 Without Docker: `npm install`, set `DATABASE_URL` in `.env` (see [`.env.example`](.env.example)), then `npm run db:migrate && npm run dev`.
 
-## Example
+## Key Features
 
-Real contract shapes — exact remainings depend on your plans; full reference in [`docs/API.md`](docs/API.md).
+- **Account and user quotas evaluated as one decision.** `POST /usage` accepts only if the global per-request limit, both plans' per-request caps, the account's remaining allowance, and the user's remaining allowance all permit it. The response names exactly which rule bound: `account_quota_exceeded`, `user_quota_exceeded`, or `max_per_request_exceeded` with `limitScope` (`global` / `account` / `user`).
+- **Configurable plans.** Four seeded system plans (Starter, Pro, Basic, Premium — values below) are read-only for every tenant; each account manages its own custom plans via `POST` / `PATCH` / `DELETE /plans`. Assignments (`/assignments`) carry full history with effective dates, and a change applies immediately to the next request.
+- **API-key authentication and account isolation.** Keys are `<prefix>.<secret>` with the secret stored as a SHA-256 hash; tenant identity is derived only from the key — client-supplied account IDs are never trusted. Composite foreign keys keep `(account_id, user_id)` pairs valid at the database level.
+- **Full decision record.** Every request — accepted or rejected — is persisted with decision, reason, units, month, and resulting remainings. Rejected requests consume no quota but stay queryable as an audit trail.
+- **Idempotent retries.** Resending the same `requestId` with the same payload replays the original committed response without consuming again; the same key with a different payload is `409 Conflict`.
+- **Concurrency-safe accounting.** Counter rows are updated under row locks in a fixed order within one transaction; deadlock and serialization failures retry with backoff; PostgreSQL constraints re-enforce the same invariants if application logic is ever wrong.
+- **Interactive company simulator.** The `simulate` command sets up a fictional tenant and provides a menu plus **12 guided scenarios** — quota accept/reject with `limitScope`, shared account pool, per-request caps, immediate plan changes, idempotent replay/conflict, validation and auth errors, usage history.
+- **Operational surface.** `/health/live` and `/health/ready`, redacted structured logs, per-IP + per-key rate limiting (fail-closed), OpenAPI 3.1 with Swagger UI at `/docs`, and an invariant verifier (`npm run verify:invariants`) that cross-checks counters against the decision log.
 
-```bash
-curl -X POST http://localhost:3000/usage \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"userId": "user123", "units": "5", "requestId": "req-001"}'
+## How It Works
+
+A typical `POST /usage` request in five steps:
+
+1. **Authenticate** — `Authorization: Bearer <key>` resolves the account; rate limits are checked per IP, then per API key.
+2. **Validate** — Zod enforces `units` (string-encoded bigint, 1…`MAX_UNITS_PER_REQUEST`) and `requestId` (required, 1–255 chars); an unknown `userId` is `404`.
+3. **Load context** — resolve the current plan assignments and this account's counters for the current **UTC month**. A known `requestId` short-circuits to a replay of its stored decision.
+4. **Lock and evaluate** — take counter row locks in a fixed order and run the pure quota evaluator: per-request caps → account remaining → user remaining. **Both account-level and user-level rules must pass; the first failing rule becomes the rejection reason.**
+5. **Persist and respond** — one transaction writes the decision row and, only if accepted, increments the counters, then returns `decision`, `accountRemaining`, optional `userRemaining`, and `periodStart`.
+
+```mermaid
+flowchart LR
+    A["POST /usage"] --> B{"Auth + rate limit"}
+    B -->|"bad key"| E["401 / 403"]
+    B --> C["Validate input"]
+    C -->|"invalid"| E2["400 / 404"]
+    C --> D{"requestId already stored?"}
+    D -->|yes| R["Replay stored decision"]
+    D -->|no| F["Lock counters and evaluate"]
+    F --> G{"All rules pass?"}
+    G -->|yes| H["Accepted: write row,<br/>increment counters"]
+    G -->|no| I["Rejected: write row,<br/>counters untouched"]
 ```
 
-Accepted — HTTP 200:
+**Business rejection vs. HTTP error.** A quota rejection is a *successful* API call: **HTTP 200** with `"decision": "rejected"` and a `rejectionReason` — the correct client reaction is to stop, upgrade, or shed load, not to retry. HTTP errors mean no usage decision was reached: `400` validation, `401` bad key, `403` forbidden (e.g. modifying a system plan), `404` unknown user, `409` idempotency conflict or missing plan, `429` rate limit, `5xx` infrastructure. **Rejected requests never consume quota**, and they are still written to history.
+
+## Account vs. User Quota — A Worked Example
+
+Captured from a real fresh stack (`app-test` profile, port 3001 — disposable, so the numbers below are exactly reproducible):
+
+```bash
+docker compose --profile app-test up -d --wait app-test
+KEY=$(docker exec usage-metering-app-test cat /run/secrets/api-key)
+B=http://localhost:3001; AUTH="Authorization: Bearer $KEY"
+J='Content-Type: application/json'
+
+# Two users
+curl -s -X POST $B/users -H "$AUTH" -H "$J" -d '{"clientUserId":"alice"}'
+curl -s -X POST $B/users -H "$AUTH" -H "$J" -d '{"clientUserId":"bob"}'
+
+# Small custom account plan: 100 units shared per month, 50 max per request
+curl -s -X POST $B/plans -H "$AUTH" -H "$J" \
+  -d '{"name":"Sandbox","type":"account","monthlyAllowance":"100","maxUnitsPerRequest":"50"}'
+# -> {"id":5,...}
+
+# Account moves from the default Starter plan to Sandbox (immediate);
+# predefined user plans: Basic (id 3) -> alice, Premium (id 4) -> bob
+curl -s -X POST $B/assignments -H "$AUTH" -H "$J" -d '{"planId":5}'
+curl -s -X POST $B/assignments -H "$AUTH" -H "$J" -d '{"planId":3,"userId":"alice"}'
+curl -s -X POST $B/assignments -H "$AUTH" -H "$J" -d '{"planId":4,"userId":"bob"}'
+```
+
+Five usage requests, every one **HTTP 200**:
+
+| # | Request | Decision | `accountRemaining` (Sandbox: 100) | `userRemaining` | Reason |
+|---|---------|----------|-----------------------------------|-----------------|--------|
+| 1 | bob, 40 units | accepted | 60 | 4960 (bob, Premium 5000) | — |
+| 2 | alice, 40 units | rejected | 60 | 500 (alice, Basic) | `max_per_request_exceeded`, `limitScope=user` (Basic caps 20/request) |
+| 3 | bob, 40 units | accepted | 20 | 4920 | — |
+| 4 | alice, 20 units | accepted | 0 | 480 | — |
+| 5 | alice, 1 unit | rejected | 0 | 480 | `account_quota_exceeded` |
+
+Accepted (request 1):
 
 ```json
 {
   "decision": "accepted",
-  "accountRemaining": "995",
-  "userRemaining": "495",
+  "accountRemaining": "60",
+  "userRemaining": "4960",
   "periodStart": "2026-10-01"
 }
 ```
 
-Rejected because the account budget is exhausted — also HTTP 200, zero quota consumed:
+Rejected because the shared budget is gone (request 5) — still HTTP 200, zero quota consumed:
 
 ```json
 {
   "decision": "rejected",
   "rejectionReason": "account_quota_exceeded",
   "accountRemaining": "0",
-  "userRemaining": "495",
+  "userRemaining": "480",
   "periodStart": "2026-10-01"
 }
 ```
 
-Sending the same `requestId` and payload again replays the identical committed response; changing the payload under that key returns `409 Conflict`. Remaining values are strings because they are PostgreSQL `bigint`s.
+**What this shows:**
+
+- **A larger user plan never enlarges the shared account budget.** Bob's Premium plan holds 4,920 units after request 3, yet request 3 left the account with only 20 — the account's Sandbox allowance is the ceiling for everyone. Request 5 is the proof at the other end: alice still has 480 personal units, but the company pool is empty, so the request is refused and nothing is consumed.
+- **User rules bind independently.** Request 2 was refused by alice's own per-request cap (20) while her allowance and the account budget were untouched.
+- **Rejections are data, not errors.** All five responses are HTTP 200; the rejected two are persisted in history with their reason and remainings, and a replay of their `requestId` returns the same stored decision.
+
+```bash
+docker compose --profile app-test rm -sf app-test postgres-app-test   # discard the scratch stack
+```
+
+## Plans
+
+Predefined system plans, seeded once at bootstrap (values in plain units per UTC calendar month):
+
+| Plan | Type | Monthly allowance | Max units / request | Owner |
+|------|------|-------------------|---------------------|-------|
+| Starter | account | 10,000 | 100 | system (read-only) |
+| Pro | account | 1,000,000 | 1,000 | system (read-only) |
+| Basic | user | 500 | 20 | system (read-only) |
+| Premium | user | 5,000 | 200 | system (read-only) |
+
+- **A fresh account starts on Starter** (10,000 units/month, 100 max/request) until an assignment says otherwise.
+- System plans form one shared catalog: every tenant can assign them, none can modify or delete them (`403` on system-plan writes).
+- Custom plans (`POST /plans`) belong to one account and are freely changed or deactivated there; **plan changes apply to the very next request** and never reset counters.
+- Assignments (`POST /assignments`, account- or user-scoped) are immediate by default, carry optional `effectiveFrom`, and keep full history; overlapping current assignments are rejected by a database `EXCLUDE` constraint.
+
+## Architecture
+
+Request flow with one dependency direction; PostgreSQL is the source of truth:
+
+```text
+Presentation   routes, Zod validation, auth, rate limiting   (Express)
+     ↓
+Application    use cases, transaction and lock boundaries     (usage, plans, assignments, keys)
+     ↓
+Domain         pure rules: quota evaluator, idempotency,     (no framework or DB imports)
+               UTC month math
+     ↓
+Infrastructure Drizzle repositories, API-key verification,   (raw SQL where needed)
+               rate-limiter store
+     ↓
+PostgreSQL 16  row locks, unique / CHECK / EXCLUDE constraints, forward-only migrations
+```
+
+- **Presentation** handles HTTP only: routing, input schemas, authenticated context, status mapping.
+- **Application** owns workflows and the transaction boundaries where locks are taken.
+- **Domain** is pure TypeScript — the quota evaluator operates on bigints, so quota rules are unit-tested without Express or a database.
+- **Infrastructure** executes SQL; native `bigint` flows end to end and serializes to JSON as strings.
+
+**Stack:** TypeScript (strict) · Node.js · Express · PostgreSQL 16 · Drizzle ORM · Zod · Pino · Vitest + Supertest · Docker Compose · OpenAPI 3.1.
+
+Schema, invariants, and the concurrency matrix: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Endpoint contracts: [`docs/API.md`](docs/API.md).
+
+## Assumptions and Scope
+
+What the service assumes, and what callers may rely on:
+
+- **Accounts are provisioned by the operator only.** There is no public account-signup endpoint: an operator script (`npm run bootstrap`, run inside the stack) creates the account and its first API key. Tenant identity always derives from the authenticated key — a client-supplied account id is never trusted.
+- **`units` is a generic resource counter.** API calls, tokens, bytes, credits — the service counts integers and enforces limits; the caller defines what one unit means.
+- **Quota rejections are HTTP 200** with `decision: "rejected"`; HTTP status errors mean no usage decision was reached (400/401/403/404/409/429/5xx). Clients must branch on `decision`, not on status alone.
+- **Months are UTC calendar months**, stamped once per request at admission; counters, history, and remainings are all scoped to that period (`periodStart`).
+- **Plan changes are immediate and non-destructive** — the next request uses the new plan, counters are never reset, and lowering an allowance below this month's usage clamps remaining to `0`.
+- **Rejected requests are recorded and consume nothing.** They are queryable audit rows and participate in idempotent replay without ever moving a counter.
+- **A user-scoped request with no effective user plan fails closed** (`409`), never silently falling back to account-only accounting.
+- **Idempotency keys are unique per account** (`requestId`, 1–255 chars): same key + identical payload replays the stored decision; same key + changed payload is `409 Conflict`.
+- **API keys are shown once.** Creation returns the full `<prefix>.<secret>` exactly once; only the prefix and a SHA-256 hash are stored afterwards.
 
 ## Design Decisions
 
@@ -166,17 +229,35 @@ Sending the same `requestId` and payload again replays the identical committed r
 docker compose up -d postgres-test    # test database used by the suite
 npm run verify                        # typecheck + lint + build + full test suite
 
-docker compose run --rm app node dist/scripts/verify-invariants.js   # counters vs decision log
-npm run loadtest -- --duration 30 --connections 10                   # autocannon baseline (needs LOADTEST_API_KEY)
+# Counter accounting vs the decision log (INV-1…INV-8, whole database):
+docker compose run --rm app node dist/scripts/verify-invariants.js
+
+# Load-test modes (bootstrap the load-test account first, see docs/performance/):
+npm run loadtest -- --duration 30 --connections 10            # baseline shape
+npm run loadtest -- --users 10 --duration 30                  # many users sharing one account counter
+npm run loadtest -- --duplicate-every 5 --duration 30         # idempotent replays under load
+npm run loadtest -- --near-quota --headroom 50 --duration 30  # sustained rejections at the limit
 ```
 
-- Tests run against **real PostgreSQL** — no database mocks: pure-domain unit tests, HTTP integration through the full Express pipeline, concurrency races, month boundaries, and direct-SQL constraint proofs. Latest verified run: **23 files, 234 tests, all passing**.
-- **Measured local baseline** (2026-10-19, Compose stack on one WSL2 dev machine, 30 s × 10 connections, rate limit raised for the measurement window): **120.44 req/s**, p50 79 ms, p90 96 ms, p99 146 ms, **0 errors / 0 timeouts / 0 non-2xx**; after the run the counter matched accepted usage exactly (+3,623) and all database invariants held. This is a single-machine baseline for that environment — **not** a production capacity claim. Method and reproduction: [`docs/performance/2026-10-19-baseline.md`](docs/performance/2026-10-19-baseline.md). Deeper soak and boundary-race campaign: [`docs/performance/README.md`](docs/performance/README.md).
+- Tests run against **real PostgreSQL** — no database mocks: pure-domain unit tests, HTTP integration through the full Express pipeline, concurrency races, month boundaries, plan-change effects, and direct-SQL constraint proofs. Latest verified run: **24 files, 239 tests, all passing**.
+
+### Benchmark: baseline vs. after
+
+| Metric | Baseline (2026-10-19) | After (2026-10-20) |
+|--------|----------------------|--------------------|
+| Throughput, one hot account | 120.44 req/s | 101.10 and 114.37 req/s (two warm repeats) |
+| Latency p50 / p90 / p99 | 79 / 96 / 146 ms | 82–93 / 100–118 / 166–189 ms |
+| Errors / timeouts / non-2xx | 0 / 0 / 0 | 0 / 0 / 0 |
+| Two accounts in parallel | not measured | **162 req/s combined** (81 + 81), 0 errors |
+
+**Methodology (identical on both sides):** Docker Compose stack on one 12-core WSL2 dev machine; account-scoped `POST /usage`, `units=1`, unique idempotency key per request, pipelining 1, 30 s × 10 connections, 5 s warm-up discarded, rate limit raised only for the measurement window and restored afterwards; afterwards the account counter and every row were cross-checked against the decision log (0 mismatches).
+
+**How to read it:** no server code changed between the two measurements — the diff is tests and load-test tooling — so the spread is run-to-run variance on a shared dev machine (the first run after a rebuild runs ~15% slower; discard it). The plateau is connection-latency-bound on purpose: every accepted request holds the account's counter row lock through commit (~5.5 ms of database time, ~3–4 ms of it the fsync), which caps a single hot account near 100–120 req/s while two accounts reach 162 req/s — the lock is per account, not global. Full series, logging-isolation runs, direct SQL timings, and the optimization options measured and rejected (`synchronous_commit=off` for durability, lock redesign for correctness): [`docs/performance/2026-10-20-loadtest-workloads.md`](docs/performance/2026-10-20-loadtest-workloads.md). Initial baseline: [`docs/performance/2026-10-19-baseline.md`](docs/performance/2026-10-19-baseline.md). These are single-machine measurements, **not** a production capacity claim.
 
 ## Limitations
 
 - **Rate limiting is per process** — counters live in a bounded in-process store: they reset on restart and are not shared between replicas; multi-replica deployments need their own shared store.
-- **A single hot account is serialized** — the no-overspend design caps one account at ~120 req/s (measured); scaling one tenant further requires counter sharding, deliberately out of scope.
+- **A single hot account is serialized** — the no-overspend design caps one account at the measured ~100–120 req/s on this machine; scaling one tenant further requires counter sharding, deliberately out of scope.
 - **`usage_requests` grows without bound** — no retention or archival job for idempotency keys and history yet.
 - **No distributed tracing or metrics** — structured logs with request IDs only.
 - **Not independently audited** — security controls are implemented and tested but unreviewed by a third party; `drizzle-orm` 0.33 carries advisory GHSA-gpj5-g38j-94v9 (identifier escaping — a pattern this codebase does not use), with the upgrade to 0.45.x scheduled as maintenance.

@@ -7,7 +7,7 @@ import {
 } from "../infrastructure/repositories/planRepository.js";
 import {
   deleteAssignmentsByAccount,
-  selectCurrentAssignmentByAccount,
+  selectCurrentAssignmentByUser,
 } from "../infrastructure/repositories/assignmentRepository.js";
 import {
   selectUserByAccountAndClientUserId,
@@ -94,21 +94,43 @@ async function main() {
   await createAssignment(Number(accountId), { planId: accountPlanId, effectiveFrom }, Number(accountId));
   logger.info("Account plan assigned");
 
-  // Create test user
-  let userId: bigint;
-  const existingUser = await selectUserByAccountAndClientUserId(db, BigInt(accountId), "loadtest-user");
-
-  if (existingUser) {
-    userId = existingUser.id;
-  } else {
-    const user = await insertUser(db, BigInt(accountId), "loadtest-user");
-    userId = user.id;
-    logger.info({ userId: userId.toString() }, "Test user created");
+  // Create test users: --users N on the load test rotates across
+  // loadtest-user-1..N (each with its own user plan so multiple users can
+  // contend for the shared account pool). LOADTEST_USERS controls how many
+  // (default 10). The legacy loadtest-user remains for older commands.
+  const userCountRaw = process.env.LOADTEST_USERS ?? "10";
+  const userCount = Number.parseInt(userCountRaw, 10);
+  if (!Number.isInteger(userCount) || userCount < 1 || userCount > 100) {
+    logger.error({ userCountRaw }, "LOADTEST_USERS must be an integer between 1 and 100");
+    process.exit(1);
   }
 
-  // Assign user plan
-  await createAssignment(Number(accountId), { userId: "loadtest-user", planId: userPlanId, effectiveFrom }, Number(accountId));
-  logger.info("User plan assigned");
+  const clientUserIds = ["loadtest-user", ...Array.from({ length: userCount }, (_, i) => `loadtest-user-${i + 1}`)];
+  const createdUsers: string[] = [];
+  let assignedUsers = 0;
+  for (const clientUserId of clientUserIds) {
+    let userRow = await selectUserByAccountAndClientUserId(db, BigInt(accountId), clientUserId);
+    if (!userRow) {
+      userRow = await insertUser(db, BigInt(accountId), clientUserId);
+      createdUsers.push(clientUserId);
+    }
+    // Assign only when no plan is in effect (first run, or the old plan was
+    // removed): re-running bootstrap must not stack superseded history rows
+    // on every container restart.
+    const current = await selectCurrentAssignmentByUser(db, userRow.id);
+    if (!current) {
+      await createAssignment(
+        Number(accountId),
+        { userId: clientUserId, planId: userPlanId, effectiveFrom },
+        Number(accountId)
+      );
+      assignedUsers += 1;
+    }
+  }
+  logger.info(
+    { users: clientUserIds.length, created: createdUsers.length, assigned: assignedUsers },
+    "Load-test users ensured with user plan coverage"
+  );
 
   // Create API key: rotate instead of accumulating one key per run. The
   // load-test script must print a usable secret, and only the first full key
@@ -124,7 +146,7 @@ async function main() {
 
   console.log("\n=== BOOTSTRAP COMPLETE ===");
   console.log(`Account: ${env.BOOTSTRAP_ACCOUNT_NAME} (ID: ${accountId})`);
-  console.log(`Test User: loadtest-user (ID: ${userId})`);
+  console.log(`Test Users: loadtest-user, loadtest-user-1..loadtest-user-${userCount}`);
   console.log(`Account Plan: Load Test Account Plan (1,000,000 units/month)`);
   console.log(`User Plan: Load Test User Plan (100,000 units/month)`);
   console.log("\n=== LOAD TEST API KEY (save this - shown only once) ===");
@@ -132,7 +154,12 @@ async function main() {
   console.log("========================================================\n");
   console.log("To run load test:");
   console.log(`  export LOADTEST_API_KEY=${keyResult.key}`);
-  console.log("  npm run loadtest\n");
+  console.log("  npm run loadtest -- --duration 30 --connections 10");
+  console.log("  npm run loadtest -- --users 10 --duration 30 --connections 10");
+  console.log("  npm run loadtest -- --duplicate-every 5 --duration 30");
+  console.log("  npm run loadtest -- --near-quota --headroom 50 --duration 30");
+  console.log("After a run: docker compose run --rm app node dist/scripts/verify-invariants.js");
+  console.log("========================================================\n");
 }
 
 main()
