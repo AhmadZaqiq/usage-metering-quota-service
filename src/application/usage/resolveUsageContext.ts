@@ -2,7 +2,10 @@ import type { Transaction } from "../../db/client.js";
 import type { PlanQuota } from "../../domain/quotaEvaluator.js";
 import { upsertAndLockCounter, type CounterRow } from "../../infrastructure/repositories/counterRepository.js";
 import { selectUserByAccountAndClientUserId } from "../../infrastructure/repositories/userRepository.js";
-import { selectCurrentAssignmentByAccount, selectCurrentAssignmentByUser, selectPlanByCriteria } from "../../infrastructure/repositories/assignmentRepository.js";
+import {
+  selectCurrentPlanQuotaByAccount,
+  selectCurrentPlanQuotaByUser,
+} from "../../infrastructure/repositories/assignmentRepository.js";
 import { NotFoundError, ConflictError } from "../../errors/AppError.js";
 
 export interface UsageContext {
@@ -57,23 +60,22 @@ export async function resolveUsageContext(
   const userCounter =
     userId !== null ? await upsertAndLockCounter(tx, accountId, userId, periodStart, createdAt) : null;
 
-  const accountAssignment = await selectCurrentAssignmentByAccount(tx, accountId);
-  const userAssignment = userId ? await selectCurrentAssignmentByUser(tx, userId) : null;
+  // One statement per scope instead of separate assignment + plan lookups:
+  // same predicates and filters, fewer round trips and planner runs inside
+  // the serialized section of the transaction.
+  const accountQuota = await selectCurrentPlanQuotaByAccount(tx, accountId);
+  const userQuota = userId ? await selectCurrentPlanQuotaByUser(tx, userId) : null;
 
-  const accountPlan = accountAssignment
-    ? await selectPlanByCriteria(tx, accountAssignment.planId)
-    : null;
-  const userPlan = userAssignment ? await selectPlanByCriteria(tx, userAssignment.planId) : null;
-
-  if (!accountPlan) {
+  if (!accountQuota) {
     // Missing plan configuration is a state conflict (409), not a client
     // input error; failing closed also prevents consuming without policy.
+    // Covers both "no current assignment" and "assigned plan unusable".
     throw new ConflictError("No active account plan assigned");
   }
 
   // Fail closed for user-scoped requests: a user without an effective user
   // plan must not silently fall back to account-only quota (fail-open).
-  if (userId !== null && (!userAssignment || !userPlan)) {
+  if (userId !== null && !userQuota) {
     throw new ConflictError("No active user plan assigned for user");
   }
 
@@ -82,13 +84,13 @@ export async function resolveUsageContext(
     accountCounter,
     userCounter,
     accountPlanQuota: {
-      monthlyAllowance: accountPlan.monthlyAllowance,
-      maxUnitsPerRequest: accountPlan.maxUnitsPerRequest,
+      monthlyAllowance: accountQuota.monthlyAllowance,
+      maxUnitsPerRequest: accountQuota.maxUnitsPerRequest,
     },
-    userPlanQuota: userPlan
+    userPlanQuota: userQuota
       ? {
-          monthlyAllowance: userPlan.monthlyAllowance,
-          maxUnitsPerRequest: userPlan.maxUnitsPerRequest,
+          monthlyAllowance: userQuota.monthlyAllowance,
+          maxUnitsPerRequest: userQuota.maxUnitsPerRequest,
         }
       : null,
   };
