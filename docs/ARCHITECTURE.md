@@ -18,7 +18,8 @@ HTTP Request
 │  PRESENTATION LAYER                                          │
 │  src/presentation/                                            │
 │  • routes/        Express route handlers (HTTP in/out)       │
-│  • middleware/    authMiddleware, asyncHandler               │
+│  • middleware/    authMiddleware, operatorAuthMiddleware,      │
+│                   asyncHandler                                │
 └──────────────────────────┬──────────────────────────────────┘
                            │ calls
                            ▼
@@ -32,8 +33,10 @@ HTTP Request
 │                  resolveUsageContext,                         │
 │                  replayUsageRequest,                          │
 │                  persistUsageDecision,                        │
-│                  usageHistoryService                          │
+│                  usageHistoryService,                         │
+│                  usageSummaryService                          │
 │  • users/        userService                                 │
+│  • accounts/     accountProvisioningService                   │
 │  • health/       healthService                               │
 └──────────────────────────┬──────────────────────────────────┘
                            │ calls
@@ -46,6 +49,8 @@ HTTP Request
 │  • date.ts             UTC month start utilities              │
 │  • hash.ts             cryptographic helpers                  │
 │  • pgError.ts          PostgreSQL error code detection        │
+│                        (+ unwrapQueryError for drizzle        │
+│                        >= 0.44 wrapped query errors)          │
 └──────────────────────────┬──────────────────────────────────┘
                            │ calls
                            ▼
@@ -113,7 +118,7 @@ No circular dependencies are permitted.
 
 ### Presentation (`src/presentation/`)
 - **Routes**: HTTP request parsing, response serialization, status code mapping
-- **Middleware**: Authentication (API key verification), async error wrapping
+- **Middleware**: Authentication (API key verification), operator-token gate for account provisioning, async error wrapping
 - **Must not**: Contain business logic, SQL queries, or quota algorithms
 
 ### Application (`src/application/`)
